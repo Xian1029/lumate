@@ -7,7 +7,8 @@ const getReviewSession = vi.fn();
 const submitReviewRating = vi.fn();
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ id: "course-resume" }),
+    useParams: () => ({ id: "course-resume" }),
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({
     push: mockPush,
     back: vi.fn(),

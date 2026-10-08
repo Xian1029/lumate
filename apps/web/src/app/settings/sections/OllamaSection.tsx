@@ -45,13 +45,13 @@ export function OllamaSection({
       setOllamaModels(models);
       if (models.length === 0) {
         setOllamaMessage(
-          "Ollama is reachable, but no models are installed.",
+          t("ui.ollama_no_models"),
         );
       }
     } catch (error) {
       setOllamaModels([]);
       setOllamaMessage(
-        (error as Error).message || "Unable to reach Ollama.",
+        (error as Error).message || t("ui.ollama_unreachable"),
       );
     } finally {
       setOllamaLoading(false);
@@ -69,10 +69,10 @@ export function OllamaSection({
       onRuntimeSaved(updated);
       onProviderChange("ollama");
       onModelChange(modelName);
-      toast.success(`Switched runtime to Ollama (${modelName})`);
+      toast.success(`已切换到 Ollama 运行时（${modelName}）`);
       await onRefreshHealth();
     } catch (error) {
-      toast.error((error as Error).message || "Failed to switch to Ollama");
+      toast.error((error as Error).message || t("ui.ollama_switch_failed"));
     } finally {
       setSavingRuntime(false);
     }
@@ -100,7 +100,7 @@ export function OllamaSection({
             onClick={() => void loadOllama()}
             disabled={ollamaLoading}
           >
-            {ollamaLoading ? "Checking..." : "Detect Models"}
+            {ollamaLoading ? t("ui.checking") : t("ui.detect_models")}
           </Button>
           <Button
             type="button"
@@ -112,9 +112,8 @@ export function OllamaSection({
               }
             }}
           >
-            Use Ollama
-          </Button>
-        </div>
+            使用 Ollama
+          </Button>        </div>
 
         {ollamaMessage && (
           <p className="text-xs text-muted-foreground">{ollamaMessage}</p>
@@ -133,7 +132,7 @@ export function OllamaSection({
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {(entry.size / (1024 * 1024 * 1024)).toFixed(1)} GB
-                    &middot; updated{" "}
+                    &middot; 更新于{" "}
                     {new Date(entry.modified_at).toLocaleDateString()}
                   </div>
                 </div>
@@ -150,7 +149,7 @@ export function OllamaSection({
                 >
                   {provider === "ollama" && model === entry.name
                     ? "Selected"
-                    : "Use Model"}
+                    : t("ui.use_model")}
                 </Button>
               </div>
             ))}

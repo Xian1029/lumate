@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 interface Props {
@@ -48,18 +49,15 @@ export class ErrorBoundary extends Component<Props, State> {
           <div role="alert" className="flex flex-col items-center justify-center p-8 text-center gap-3 animate-fade-in">
             <p className="text-sm font-medium text-destructive">
               {this.props.section
-                ? `Failed to load ${this.props.section}`
-                : "Something went wrong"}
-            </p>
-            <p className="text-xs text-muted-foreground max-w-sm">
-              {this.state.error.message}
+                ? t("ui.section_load_failed")
+                : t("ui.something_wrong")}
             </p>
             <button
               onClick={this.reset}
-              aria-label="Retry loading this component"
+              aria-label={t("ui.retry_loading_this_component")}
               className="text-xs text-brand hover:underline"
             >
-              Try again
+              {t("ui.try_again")}
             </button>
           </div>
         )

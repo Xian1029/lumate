@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { interviewTurn } from "@/lib/api/onboarding";
 import type { SpaceLayoutResponse, OnboardingAction } from "@/lib/api/onboarding";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 
 const BLOCK_ICONS: Record<string, typeof BookOpen> = {
   notes: FileText,
@@ -35,6 +36,14 @@ const BLOCK_NAMES: Record<string, string> = {
   wrong_answers: "错题本",
   forecast: "预测",
   agent_insight: "AI 洞察",
+  summary: "学习摘要",
+};
+
+const BLOCK_SIZE_NAMES: Record<string, string> = {
+  small: "紧凑",
+  medium: "标准",
+  large: "宽版",
+  full: "整行",
 };
 
 interface ChatMessage {
@@ -43,7 +52,7 @@ interface ChatMessage {
 }
 
 interface HabitInterviewStepProps {
-  onComplete: (layout: SpaceLayoutResponse, profile: Record<string, unknown>) => void;
+  onComplete: (layout: SpaceLayoutResponse, profile: Record<string, unknown>) => void | Promise<void>;
   onSkip: () => void;
   onBack: () => void;
   t: (key: string) => string;
@@ -55,6 +64,7 @@ export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInter
   const [recommendedLayout, setRecommendedLayout] = useState<SpaceLayoutResponse | null>(null);
   const [completeProfile, setCompleteProfile] = useState<Record<string, unknown> | null>(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const initRef = useRef(false);
@@ -115,11 +125,15 @@ export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInter
     void doSend(text);
   }, [inputValue, isTyping, doSend]);
 
-  const handleAccept = useCallback(() => {
-    if (recommendedLayout && completeProfile) {
-      onComplete(recommendedLayout, completeProfile);
+  const handleAccept = useCallback(async () => {
+    if (!recommendedLayout || !completeProfile || isApplying) return;
+    setIsApplying(true);
+    try {
+      await onComplete(recommendedLayout, completeProfile);
+    } finally {
+      setIsApplying(false);
     }
-  }, [recommendedLayout, completeProfile, onComplete]);
+  }, [recommendedLayout, completeProfile, isApplying, onComplete]);
 
   return (
     <div className="flex flex-col" style={{ minHeight: 420 }}>
@@ -148,7 +162,12 @@ export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInter
                   : "bg-muted text-foreground rounded-bl-md"
               }`}
             >
-              {msg.content}
+              {msg.role === "assistant" ? (
+                <MarkdownRenderer
+                  content={msg.content}
+                  className="[&_p]:m-0 [&_p+p]:mt-2 [&_ul]:my-1.5 [&_ul]:pl-5 [&_li]:my-1 [&_strong]:font-semibold [&_strong]:text-foreground"
+                />
+              ) : msg.content}
             </div>
           </div>
         ))}
@@ -192,7 +211,7 @@ export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInter
                   >
                     <Icon className="size-3.5 text-muted-foreground shrink-0" />
                     <span className="text-xs text-foreground">{name}</span>
-                    <span className="text-[10px] text-muted-foreground ml-auto">{block.size}</span>
+                    <span className="text-[10px] text-muted-foreground ml-auto">{BLOCK_SIZE_NAMES[block.size] || "标准"}</span>
                   </div>
                 );
               })}
@@ -201,10 +220,12 @@ export function HabitInterviewStep({ onComplete, onSkip, onBack, t }: HabitInter
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={handleAccept}
+              onClick={() => void handleAccept()}
+              disabled={isApplying}
               className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-brand text-brand-foreground hover:opacity-90 transition-opacity"
             >
-              开始学习
+              {isApplying ? <Loader2 className="size-4 animate-spin" /> : null}
+              {isApplying ? "正在创建…" : "开始学习"}
               <ChevronRight className="size-4" />
             </button>
             <button

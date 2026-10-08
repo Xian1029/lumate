@@ -18,6 +18,7 @@ from main import app
 import database as database_module
 from database import get_db, Base
 from models.content import CourseContentTree
+from models.generated_asset import GeneratedAsset
 from models.ingestion import StudySession, WrongAnswer
 from models.practice import PracticeProblem, PracticeResult
 from models.preference import PreferenceSignal
@@ -603,9 +604,33 @@ async def test_extract_quiz_returns_quality_stats_in_response(client, monkeypatc
                 parent_id=None,
                 title="Week 1 Notes",
                 content="Binary search repeatedly halves a sorted search space and preserves the candidate interval.",
-                level=0,
+                level=1,
                 order_index=0,
                 source_type="manual",
+            )
+        )
+        await session.commit()
+
+    # Quiz extraction follows the active AI note shown to the learner, not the
+    # raw textbook page — seed the saved note the endpoint reads from.
+    async with app.state.test_session_factory() as session:
+        user = (await session.execute(select(User).limit(1))).scalar_one()
+        session.add(
+            GeneratedAsset(
+                user_id=user.id,
+                course_id=course_id,
+                asset_type="notes",
+                title="Week 1 Notes",
+                content={
+                    "markdown": (
+                        "## 二分查找\n"
+                        "二分查找在有序数组中每次折半缩小候选区间，并保持目标值（若存在）"
+                        "始终落在区间内。前提条件是数组必须有序。"
+                    )
+                },
+                metadata_={"source_node_id": str(node_id)},
+                batch_id=uuid.uuid4(),
+                version=1,
             )
         )
         await session.commit()
@@ -736,7 +761,7 @@ async def test_restructure_notes_returns_structured_503_when_llm_unavailable(cli
                     "It compares the target with the midpoint, then narrows the interval "
                     "while preserving the invariant that the target, if present, stays inside the bounds."
                 ),
-                level=0,
+                level=1,
                 order_index=0,
                 source_type="manual",
             )
@@ -927,6 +952,60 @@ async def test_save_generated_notes_and_replace_version(client):
 
 
 @pytest.mark.asyncio
+async def test_personal_note_crud(client):
+    create_resp = await client.post("/api/courses/", json={"name": "Personal Notes Course", "description": "notes"})
+    assert create_resp.status_code == 201
+    course_id = uuid.UUID(create_resp.json()["id"])
+    node_id = uuid.uuid4()
+
+    async with app.state.test_session_factory() as session:
+        session.add(
+            CourseContentTree(
+                id=node_id,
+                course_id=course_id,
+                title="正数和负数",
+                content=(
+                    "正数表示大于零的量，负数表示小于零的量。生活中的温度、海拔、收入和支出"
+                    "都可以用正数与负数表示。零既不是正数也不是负数，是两者的分界点。"
+                    "例如零上五摄氏度记作正五摄氏度，零下二摄氏度记作负二摄氏度。"
+                ),
+                level=2,
+                order_index=0,
+                source_type="manual",
+                content_category="knowledge",
+            )
+        )
+        await session.commit()
+
+    created = await client.post(
+        f"/api/notes/personal/{course_id}",
+        json={"content_node_id": str(node_id), "text": "零是正数和负数的分界。", "style": "mint"},
+    )
+    assert created.status_code == 200, created.text
+    note = created.json()
+    assert note["text"] == "零是正数和负数的分界。"
+    assert note["style"] == "mint"
+
+    listing = await client.get(f"/api/notes/personal/{course_id}/by-node/{node_id}")
+    assert listing.status_code == 200, listing.text
+    assert [item["id"] for item in listing.json()] == [note["id"]]
+
+    updated = await client.patch(
+        f"/api/notes/personal/{course_id}/{note['id']}",
+        json={"content_node_id": str(node_id), "text": "零是两类数的分界点。", "style": "sky"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["text"] == "零是两类数的分界点。"
+    assert updated.json()["style"] == "sky"
+
+    deleted = await client.delete(f"/api/notes/personal/{course_id}/{note['id']}")
+    assert deleted.status_code == 200, deleted.text
+    listing_after_delete = await client.get(f"/api/notes/personal/{course_id}/by-node/{node_id}")
+    assert listing_after_delete.status_code == 200
+    assert listing_after_delete.json() == []
+
+
+@pytest.mark.asyncio
 async def test_save_generated_flashcards_and_study_plans(client):
     create_resp = await client.post("/api/courses/", json={"name": "Assets Course", "description": "assets"})
     assert create_resp.status_code == 201
@@ -953,6 +1032,32 @@ async def test_workflow_compat_routes_cover_exam_plan_study_plan_and_wrong_answe
     assert create_resp.status_code == 201
     course_id = create_resp.json()["id"]
 
+    # Notes-driven contract: exam prep on a note-less course returns a
+    # structured 422 telling the learner to generate notes first — never a
+    # schema-validation 422 on a normal request.
+    empty_resp = await client.post(
+        "/api/workflows/exam-prep",
+        json={"course_id": course_id, "days_until_exam": 5, "exam_topic": "Binary Search"},
+    )
+    assert empty_resp.status_code == 422
+    assert "笔记" in empty_resp.json()["message"]
+
+    async with app.state.test_session_factory() as session:
+        user = (await session.execute(select(User).limit(1))).scalar_one()
+        session.add(
+            GeneratedAsset(
+                user_id=user.id,
+                course_id=uuid.UUID(course_id),
+                asset_type="notes",
+                title="Week 1 Notes",
+                content={"markdown": "## 二分查找\n折半缩小候选区间。\n## 循环不变量\n每次迭代保持区间有效。"},
+                metadata_={"source_node_id": str(uuid.uuid4())},
+                batch_id=uuid.uuid4(),
+                version=1,
+            )
+        )
+        await session.commit()
+
     exam_resp = await client.post(
         "/api/workflows/exam-prep",
         json={"course_id": course_id, "days_until_exam": 5, "exam_topic": "Binary Search"},
@@ -960,8 +1065,9 @@ async def test_workflow_compat_routes_cover_exam_plan_study_plan_and_wrong_answe
     assert exam_resp.status_code == 200
     exam_payload = exam_resp.json()
     assert exam_payload["days_until_exam"] == 5
-    assert exam_payload["topics_count"] >= 0
-    assert "Day 1" in exam_payload["plan"]
+    assert exam_payload["topics_count"] >= 1
+    # The plan template is localized; day headings render as 「第 N 天」.
+    assert "第 1 天" in exam_payload["plan"]
 
     save_resp = await client.post(
         "/api/workflows/study-plans/save",
@@ -1467,5 +1573,17 @@ async def test_delete_course(client):
     create_resp = await client.post("/api/courses/", json={"name": "Delete Course", "description": "for delete"})
     assert create_resp.status_code == 201
     cid = create_resp.json()["id"]
+
+    note_resp = await client.post(
+        "/api/notes/generated/save",
+        json={
+            "course_id": cid,
+            "title": "Delete with course",
+            "markdown": "This related record must be deleted first.",
+        },
+    )
+    assert note_resp.status_code == 200
+
     resp = await client.delete(f"/api/courses/{cid}")
     assert resp.status_code == 204
+    assert (await client.get(f"/api/courses/{cid}")).status_code == 404

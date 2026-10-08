@@ -1,3 +1,5 @@
+import { t } from "@/lib/i18n";
+import type { Locale } from "@/lib/i18n";
 import { API_BASE, buildSecureRequestInit, request, type JsonObject } from "./client";
 
 // ── Chat types ──
@@ -220,6 +222,8 @@ interface ChatStreamOptions {
   blockTypes?: string[];
   /** Block types the user recently dismissed (last 7 days). */
   dismissedBlockTypes?: string[];
+  /** Current interface language, sent on every turn. */
+  locale?: Locale;
 }
 
 // ── Chat (SSE streaming) ──
@@ -241,6 +245,7 @@ export async function* streamChat(
         session_id: opts.sessionId,
         history: opts.history ?? [],
         images: opts.images ?? [],
+        locale: opts.locale ?? "zh",
         ...(opts.interrupt ? { interrupt: true } : {}),
         ...(opts.learningMode ? { learning_mode: opts.learningMode } : {}),
         ...(opts.blockTypes?.length ? { block_types: opts.blockTypes } : {}),
@@ -252,13 +257,10 @@ export async function* streamChat(
 
   if (!res.ok || !res.body) {
     if (res.status === 429) {
-      const retryAfter = res.headers.get("Retry-After");
-      const error = await res.json().catch(() => ({}));
-      const seconds = retryAfter || error.retry_after || "a few";
-      throw new Error(`Rate limit exceeded. Please wait ${seconds} seconds before trying again.`);
+      throw new Error(t("ui.rate_limit"));
     }
-    const error = await res.json().catch(() => ({ detail: "Chat stream failed" }));
-    throw new Error(error.detail || "Chat stream failed");
+    const error = await res.json().catch(() => ({ detail: t("ui.chat_stream_failed") }));
+    throw new Error(error.detail || t("ui.chat_stream_failed"));
   }
 
   const reader = res.body.getReader();
@@ -439,4 +441,8 @@ export async function getChatSessionMessages(
   if (options?.offset) params.set("offset", String(options.offset));
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return request(`/chat/sessions/${sessionId}/messages${suffix}`);
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  await request<void>(`/chat/sessions/${sessionId}`, { method: "DELETE" });
 }

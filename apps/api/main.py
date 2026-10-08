@@ -65,6 +65,7 @@ def _configure_middleware(app: FastAPI) -> None:
         llm_rpm=settings.rate_limit_llm_rpm,
         cost_budget_per_minute=settings.rate_limit_cost_budget,
         cost_aware=(settings.rate_limit_mode == "cost_aware"),
+        exempt_local_reads=(settings.deployment_mode == "single_user" and not settings.auth_enabled),
     )
     app.add_middleware(SecurityHeadersMiddleware)
 

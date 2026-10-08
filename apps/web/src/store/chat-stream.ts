@@ -39,6 +39,19 @@ export async function applyBlockDecisions(
 
     if (!result.operations.length) return;
 
+    // Older API instances and saved signals may still emit a mastery-gate
+    // insight without usable concept names. Never show a false “unknown” alert.
+    const operations = result.operations.filter((op) => {
+      if (op.block_type !== "agent_insight" || op.config?.insightType !== "mastery_gate") return true;
+      const concepts = Array.isArray(op.config.concepts)
+        ? op.config.concepts.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+      const reason = op.reason ?? "";
+      const hasUnknownOnlyReason = /unknown(?:\\s*,\\s*unknown){1,}/i.test(reason) || /前置知识.*(?:unknown|未知)/i.test(reason);
+      return concepts.some((concept) => !/^(unknown|none|null|未知|未命名)$/i.test(concept.trim())) || !hasUnknownOnlyReason;
+    });
+    if (!operations.length) return;
+
     const batchOps: Array<
       | { action: "add"; type: BlockType; config?: Record<string, unknown>; size?: BlockSize }
       | { action: "remove"; blockId: string }
@@ -46,7 +59,7 @@ export async function applyBlockDecisions(
       | { action: "update_config"; blockId: string; config: Record<string, unknown> }
     > = [];
 
-    for (const op of result.operations) {
+    for (const op of operations) {
       if (!isValidBlockType(op.block_type)) {
         console.warn(`[BlockDecisions] Unknown block type: ${op.block_type}`);
         continue;
@@ -90,7 +103,7 @@ export async function applyBlockDecisions(
       // Show adaptation toast with undo support
       try {
         const { showAdaptationToast } = await import("@/components/shared/adaptation-toast");
-        showAdaptationToast(result.explanation, result.operations, () => ws.undoLayout(), result.interventionIds);
+        showAdaptationToast(result.explanation, operations, () => ws.undoLayout(), result.interventionIds);
       } catch (e) {
         console.warn("[BlockDecisions] Toast notification failed:", e);
       }
@@ -123,6 +136,8 @@ export function categorizeError(
   if (/rate.?limit|429/i.test(msg)) return "rate_limit";
   if (/auth|401|403|api.?key|unauthorized/i.test(msg)) return "auth_error";
   if (/timeout|timed?\s?out|abort/i.test(msg)) return "timeout";
-  if (/llm|model|provider|mock|circuit/i.test(msg)) return "llm_unavailable";
+  if (/llm|model|provider|mock|circuit|ai\s*service|temporarily unavailable/i.test(msg)) {
+    return "llm_unavailable";
+  }
   return "generic";
 }

@@ -106,6 +106,31 @@ async def approve_agent_task(
         raise ConflictError(str(exc)) from exc
     if not task:
         raise NotFoundError("Task", task_id)
+    if task.task_type == "exam_prep" and task.course_id:
+        # Compatibility for historic AgentTasks only. Agent approval is not
+        # LearningPlan approval: the resulting plan remains PENDING_APPROVAL.
+        from services.learning_plans.legacy_compat import create_plan_from_legacy_markdown
+        payload = task.input_json or {}
+        markdown = str(payload.get("plan_markdown") or "").strip()
+        if not markdown:
+            raise ConflictError("这份旧计划缺少可审批的计划内容，请返回计划页重新生成。")
+        content_node_id = payload.get("content_node_id")
+        plan = await create_plan_from_legacy_markdown(
+            db,
+            user_id=user.id,
+            course_id=task.course_id,
+            title=task.title,
+            markdown=markdown,
+            source="AI",
+            content_node_id=uuid.UUID(str(content_node_id)) if content_node_id else None,
+            submit_for_review=True,
+        )
+        metadata = dict(task.metadata_json or {})
+        metadata["learning_plan_id"] = str(plan.id)
+        metadata["legacy_exam_prep_adapted"] = True
+        task.metadata_json = metadata
+        await db.commit()
+        await db.refresh(task)
     request.state.audit_action_kind = "task_approve_http"
     request.state.audit_task_id = str(task.id)
     request.state.approval_status = task.approval_status

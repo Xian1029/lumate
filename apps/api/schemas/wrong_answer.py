@@ -9,6 +9,9 @@ from pydantic import BaseModel
 class WrongAnswerResponse(BaseModel):
     id: uuid.UUID
     problem_id: uuid.UUID
+    # Stable source lesson of the original question. Unit views must not infer
+    # this relationship from titles or AI-generated labels.
+    content_node_id: uuid.UUID | None = None
     question: str | None = None
     question_type: str | None = None
     options: dict[str, str] | None = None
@@ -19,6 +22,7 @@ class WrongAnswerResponse(BaseModel):
     diagnosis: str | None = None
     error_detail: dict | None = None
     knowledge_points: list | None
+    wrong_attempt_count: int = 1
     review_count: int
     mastered: bool
     created_at: datetime | None = None

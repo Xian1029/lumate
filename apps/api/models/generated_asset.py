@@ -12,7 +12,12 @@ from database import Base
 
 
 class GeneratedAsset(Base):
-    """Stores versioned AI-generated assets outside the core question bank."""
+    """Stores versioned AI-generated assets outside the core question bank.
+
+    ``asset_type='study_plan'`` is a read-only generation snapshot/history. It
+    must never be used as the source of plan approval, task status or progress;
+    those facts belong to LearningPlan and LearningTask.
+    """
 
     __tablename__ = "generated_assets"
 

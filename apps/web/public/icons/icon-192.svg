@@ -1,4 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="24" fill="#1a1a1a"/>
-  <text x="96" y="106" font-family="system-ui, sans-serif" font-weight="bold" font-size="84" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">OT</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="启知伴书本与嫩芽图标">
+  <defs>
+    <linearGradient id="sunny" x1="28" y1="18" x2="166" y2="178" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD978"/>
+      <stop offset="1" stop-color="#F4AD55"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="180" height="180" rx="48" fill="url(#sunny)"/>
+  <path d="M95.8 72.5C80.7 59.3 61 55.1 39 59.8v68.8c22.2-4.7 41.9-.5 56.8 12.7V72.5Z" fill="#FFFDF6" stroke="#315D4B" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M96.2 72.5c15.1-13.2 34.8-17.4 56.8-12.7v68.8c-22.2-4.7-41.9-.5-56.8 12.7V72.5Z" fill="#FFFDF6" stroke="#315D4B" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M96 73v68" stroke="#315D4B" stroke-width="8" stroke-linecap="round"/>
+  <path d="M96 69c-2-20.5 9.1-35.2 30.5-39-1 20.1-10.8 32.8-30.5 39Z" fill="#71B985" stroke="#315D4B" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M94 69C75.2 65.5 65.2 54 64.7 36.2 84.2 39 94.3 50.5 94 69Z" fill="#9BD49D" stroke="#315D4B" stroke-width="7" stroke-linejoin="round"/>
 </svg>

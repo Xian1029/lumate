@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, event, func
 from models.compat import CompatJSONB, CompatUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,7 +12,11 @@ from database import Base
 
 
 class StudyGoal(Base):
-    """High-level learning goal owned by a user and optionally scoped to a course."""
+    """High-level learning goal owned by a user and optionally scoped to a course.
+
+    Legacy daily checklist usage remains readable for compatibility; new task
+    execution must be represented by ``LearningTask`` instead.
+    """
 
     __tablename__ = "study_goals"
 
@@ -44,3 +48,12 @@ class StudyGoal(Base):
         Index("ix_study_goal_user_course_status_created", "user_id", "course_id", "status", "created_at"),
         Index("ix_study_goal_user_status_target", "user_id", "status", "target_date"),
     )
+
+
+@event.listens_for(StudyGoal, "before_insert")
+def _warn_legacy_plan_goal_write(_mapper, _connection, target: StudyGoal) -> None:
+    """Flag only the old Markdown-plan form; genuine long-term goals remain valid."""
+    metadata = target.metadata_json or {}
+    if metadata.get("plan_batch_id") or metadata.get("source") in {"assistant", "manual_plan"}:
+        from services.legacy_plan_monitor import record_legacy_write
+        record_legacy_write("plan_type_study_goal_write_attempt", course_id=str(target.course_id) if target.course_id else None)

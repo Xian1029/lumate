@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,12 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 
 router = APIRouter()
+
+
+def _active_seconds(session: StudySession) -> int:
+    if session.active_seconds:
+        return session.active_seconds
+    return (session.duration_minutes or 0) * 60
 
 
 class ApplyTemplateRequest(BaseModel):
@@ -77,7 +83,7 @@ async def get_learning_trends(
         if s.started_at:
             d = s.started_at.strftime("%Y-%m-%d")
             if d in daily:
-                daily[d]["study_minutes"] += s.duration_minutes or 0
+                daily[d]["study_minutes"] += _active_seconds(s) / 60
 
     for q in quiz_rows:
         if q.answered_at:
@@ -94,6 +100,7 @@ async def get_learning_trends(
 
     trend_data = sorted(daily.values(), key=lambda x: x["date"])
     for entry in trend_data:
+        entry["study_minutes"] = round(entry["study_minutes"], 1)
         entry["accuracy"] = (
             round(entry["quiz_correct"] / entry["quiz_total"] * 100, 1)
             if entry["quiz_total"] > 0 else None
@@ -140,7 +147,7 @@ async def get_global_trends(
         if s.started_at:
             d = s.started_at.strftime("%Y-%m-%d")
             if d in daily:
-                daily[d]["study_minutes"] += s.duration_minutes or 0
+                daily[d]["study_minutes"] += _active_seconds(s) / 60
 
     for q in quiz_rows:
         if q.answered_at:
@@ -152,6 +159,7 @@ async def get_global_trends(
 
     trend_data = sorted(daily.values(), key=lambda x: x["date"])
     for entry in trend_data:
+        entry["study_minutes"] = round(entry["study_minutes"], 1)
         entry["accuracy"] = (
             round(entry["quiz_correct"] / entry["quiz_total"] * 100, 1)
             if entry["quiz_total"] > 0 else None
@@ -165,13 +173,25 @@ async def get_global_trends(
 
 @router.get("/weekly-report", summary="Get weekly report", description="Generate a weekly learning report comparing this week to last week.")
 async def get_weekly_report(
+    timezone_offset_minutes: int = Query(
+        0,
+        ge=-720,
+        le=840,
+        description="Minutes east of UTC, used to group study time by the learner's local day.",
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a weekly learning report with this-week vs last-week comparison."""
-    now = datetime.now(timezone.utc)
-    this_monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-    last_monday = this_monday - timedelta(days=7)
+    learner_timezone = timezone(timedelta(minutes=timezone_offset_minutes))
+    now_local = datetime.now(learner_timezone)
+    this_monday_local = (now_local - timedelta(days=now_local.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    last_monday_local = this_monday_local - timedelta(days=7)
+    this_monday = this_monday_local.astimezone(timezone.utc)
+    last_monday = last_monday_local.astimezone(timezone.utc)
+    now = now_local.astimezone(timezone.utc)
 
     async def _week_stats(start: datetime, end: datetime) -> dict:
         sess_result = await db.execute(
@@ -182,8 +202,27 @@ async def get_weekly_report(
             )
         )
         sessions = sess_result.scalars().all()
-        study_minutes = sum(s.duration_minutes or 0 for s in sessions)
-        active_days = len({s.started_at.strftime("%Y-%m-%d") for s in sessions if s.started_at})
+        study_minutes = sum(_active_seconds(s) for s in sessions) // 60
+        seconds_by_day: dict[str, int] = {}
+        for session in sessions:
+            if not session.started_at:
+                continue
+            started_at = session.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            day = started_at.astimezone(learner_timezone).strftime("%Y-%m-%d")
+            seconds_by_day[day] = seconds_by_day.get(day, 0) + _active_seconds(session)
+        active_days = sum(1 for seconds in seconds_by_day.values() if seconds >= 5 * 60)
+        start_local = start.astimezone(learner_timezone)
+        daily_study = []
+        for index in range(7):
+            local_day = start_local + timedelta(days=index)
+            day = local_day.strftime("%Y-%m-%d")
+            daily_study.append({
+                "date": day,
+                "weekday": index + 1,
+                "study_minutes": round(seconds_by_day.get(day, 0) / 60, 1),
+            })
 
         from models.practice import PracticeResult
         quiz_result = await db.execute(
@@ -201,6 +240,7 @@ async def get_weekly_report(
         return {
             "study_minutes": study_minutes,
             "active_days": active_days,
+            "daily_study": daily_study,
             "quiz_total": quiz_total,
             "quiz_correct": quiz_correct,
             "accuracy": accuracy,
@@ -237,8 +277,8 @@ async def get_weekly_report(
 
     return {
         "period": {
-            "start": this_monday.strftime("%Y-%m-%d"),
-            "end": now.strftime("%Y-%m-%d"),
+            "start": this_monday_local.strftime("%Y-%m-%d"),
+            "end": now_local.strftime("%Y-%m-%d"),
         },
         "this_week": this_week,
         "last_week": last_week,

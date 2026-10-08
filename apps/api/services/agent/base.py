@@ -114,6 +114,7 @@ class BaseAgent(DelegationMixin, BackgroundTaskMixin, PromptBuildingMixin, ABC):
             user_id=ctx.user_id,
             course_id=ctx.course_id,
             user_message=sub_message,
+            response_language=ctx.response_language,
             preferences=ctx.preferences,
             content_docs=ctx.content_docs,
             memories=ctx.memories,

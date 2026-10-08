@@ -1,3 +1,4 @@
+import { t, tf } from "@/lib/i18n";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@/test-utils";
 import { ChapterList } from "./chapter-list";
@@ -10,9 +11,8 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/lib/i18n-context", () => ({
-  useT: () => (key: string) => key,
-  useTF: () => (key: string, params?: Record<string, unknown>) =>
-    params ? `${key}:${JSON.stringify(params)}` : key,
+  useT: () => (key: string) => t(key),
+  useTF: () => (key: string, params?: Record<string, string | number | null | undefined>) => tf(key, params),
 }));
 
 const MOCK_NODES: ContentNode[] = [
@@ -68,7 +68,7 @@ describe("ChapterList", () => {
 
   it("renders empty state when no nodes", () => {
     render(<ChapterList courseId="test" nodes={[]} />);
-    expect(screen.getByText("chapter.empty")).toBeInTheDocument();
+    expect(screen.getByText("还没有内容，上传资料开始学习。")).toBeInTheDocument();
   });
 
   it("filters out assignment/info leaf nodes", () => {
@@ -113,7 +113,7 @@ describe("ChapterList", () => {
 
   it("has navigation role with aria-label", () => {
     render(<ChapterList courseId="test" nodes={MOCK_NODES} />);
-    expect(screen.getByRole("navigation", { name: "Course chapters" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: t("ui.course_chapters") })).toBeInTheDocument();
   });
 
   it("renders tree items", () => {
@@ -124,7 +124,7 @@ describe("ChapterList", () => {
 
   it("shows child count for folder nodes", () => {
     render(<ChapterList courseId="test" nodes={MOCK_NODES} />);
-    expect(screen.getByText('chapter.sections:{"count":2}')).toBeInTheDocument();
+    expect(screen.getByText("2 个章节")).toBeInTheDocument();
   });
 
   it("renders correct links", () => {

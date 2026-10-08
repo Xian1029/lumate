@@ -25,6 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models.knowledge_graph import KnowledgeNode, KnowledgeEdge, ConceptMastery
+from models.content import CourseContentTree
+from services.knowledge.content_linking import (
+    is_learnable_curriculum_node,
+    select_best_content_node,
+)
 from services.spaced_repetition.fsrs import _retrievability as fsrs_retrievability
 
 logger = logging.getLogger(__name__)
@@ -71,6 +76,12 @@ async def get_smart_review_session(
     node_map = {n.id: n for n in nodes}
     node_ids = list(node_map.keys())
 
+    content_result = await db.execute(
+        select(CourseContentTree).where(CourseContentTree.course_id == course_id)
+    )
+    curriculum_nodes = list(content_result.scalars().all())
+    curriculum_nodes_by_id = {str(item.id): item for item in curriculum_nodes}
+
     # Get user mastery
     result = await db.execute(
         select(ConceptMastery).where(
@@ -107,8 +118,25 @@ async def get_smart_review_session(
 
     for node in nodes:
         mastery = mastery_map.get(node.id)
-        mastery_score = mastery.mastery_score if mastery else 0.0
-        practice_count = mastery.practice_count if mastery else 0
+        # A concept is eligible for *review* only after the learner has
+        # actually studied/practised it.  Knowledge nodes are created during
+        # ingestion, so treating a missing mastery row as zero mastery makes a
+        # brand-new course incorrectly look overdue.
+        if mastery is None or mastery.practice_count <= 0:
+            continue
+
+        mastery_score = mastery.mastery_score
+        practice_count = mastery.practice_count
+
+        # Keep a freshly reviewed concept out of the queue until FSRS says it
+        # is due. Otherwise low mastery can immediately recreate a completed
+        # review session and its agent insight.
+        if mastery and mastery.next_review_at:
+            next_review_at = mastery.next_review_at
+            if next_review_at.tzinfo is None:
+                next_review_at = next_review_at.replace(tzinfo=timezone.utc)
+            if next_review_at > now:
+                continue
 
         # ── Priority scoring (higher = more urgent) ──
         priority = 0.0
@@ -119,11 +147,6 @@ async def get_smart_review_session(
             priority += (settings.lector_mastery_threshold - mastery_score) * settings.lector_factor_low_mastery
             if mastery_score < 0.3:
                 reason_parts.append("low mastery")
-
-        # Factor 2: Never practiced
-        if practice_count == 0:
-            priority += settings.lector_factor_never_practiced
-            reason_parts.append("not yet practiced")
 
         # Factor 3: Time decay — stability check
         if mastery and mastery.last_practiced_at:
@@ -221,6 +244,17 @@ async def get_smart_review_session(
             days_elapsed = (now - mastery.last_practiced_at).total_seconds() / 86400
             item_retrievability = fsrs_retrievability(days_elapsed, item_stability)
 
+        matched_content = select_best_content_node(node.name, curriculum_nodes)
+        stored_content = (
+            curriculum_nodes_by_id.get(str(node.content_node_id))
+            if getattr(node, "content_node_id", None)
+            else None
+        )
+        fallback_content = (
+            stored_content
+            if stored_content and is_learnable_curriculum_node(stored_content)
+            else None
+        )
         scored_items.append(ReviewItem(
             concept_name=node.name,
             concept_id=str(node.id),
@@ -232,7 +266,11 @@ async def get_smart_review_session(
             stability_days=round(item_stability, 2),
             retrievability=round(item_retrievability, 3),
             last_practiced_at=mastery.last_practiced_at.isoformat() if mastery and mastery.last_practiced_at else None,
-            content_node_id=str(node.content_node_id) if getattr(node, "content_node_id", None) else None,
+            content_node_id=(
+                str((matched_content or fallback_content).id)
+                if matched_content or fallback_content
+                else None
+            ),
         ))
 
     # Sort by priority (highest first) and take top N

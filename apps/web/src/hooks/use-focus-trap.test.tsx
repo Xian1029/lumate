@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { describe, it, expect } from "vitest";
 import { useRef } from "react";
 import { render, screen } from "@/test-utils";
@@ -8,9 +9,9 @@ function TrapHarness({ active }: { active: boolean }) {
   useFocusTrap(ref, active);
   return (
     <div ref={ref} tabIndex={-1} data-testid="container">
-      <button data-testid="btn-1">First</button>
-      <button data-testid="btn-2">Second</button>
-      <button data-testid="btn-3">Third</button>
+      <button data-testid="btn-1">{t("ui.first")}</button>
+      <button data-testid="btn-2">{t("ui.second")}</button>
+      <button data-testid="btn-3">{t("ui.third")}</button>
     </div>
   );
 }

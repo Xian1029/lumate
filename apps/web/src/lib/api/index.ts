@@ -8,10 +8,15 @@
 
 export type { JsonObject, NullableDateTime } from "./client";
 
+export { listLearningPlans, createLearningPlan, getLearningPlan, deleteLearningPlan, listLearningPlanTasks, createLearningTask, updateLearningPlan, planAction, startLearningPlan, regenerateLearningPlan, getLearningPlanDashboard, getLearningHomeOverview, getCourseLearningPlanDashboard, taskAction, postponeLearningTask, planStatusLabel, taskStatusLabel, taskTypeLabel } from "./learning-plans";
+export type { LearningPlan, LearningTask, StartLearningPlanResult, HomeLearningTask, LearningPlanSummary, LearningPlanDashboard, LearningHomeOverview, HomeLearningAction, HomeLearningSpace, HomeProcessingUpload, HomeReviewItem, WorkspaceLearningProgress, LearningPlanStatus, LearningTaskStatus, LearningTaskType } from "./learning-plans";
+
 export {
   listCourseOverview,
   getHealthStatus,
   createCourse,
+  activateCourse,
+  cancelSetupCourse,
   updateCourse,
   deleteCourse,
   getContentTree,
@@ -19,6 +24,10 @@ export {
   saveGeneratedNotes,
   listGeneratedNoteBatches,
   getAiNoteForNode,
+  listPersonalNotes,
+  createPersonalNote,
+  updatePersonalNote,
+  deletePersonalNote,
   uploadFile,
   scrapeUrl,
   listAuthSessions,
@@ -38,12 +47,15 @@ export type {
   RestructuredNotes,
   AuthSessionSummary,
   AiNoteForNode,
+  PersonalNote,
+  PersonalNoteStyle,
 } from "./courses";
 
 export {
   streamChat,
   listChatSessions,
   getChatSessionMessages,
+  deleteChatSession,
   getChatGreeting,
 } from "./chat";
 
@@ -67,6 +79,7 @@ export {
   diagnoseWrongAnswer,
   getWrongAnswerStats,
   extractQuiz,
+  getMasteryHistory,
   listProblems,
   listGeneratedQuizBatches,
   saveGeneratedQuiz,
@@ -89,6 +102,7 @@ export type {
   GeneratedQuizBatchSummary,
   SavedGeneratedQuizBatch,
   ExtractQuizResult,
+  MasterySnapshot,
   QuizNodeFailure,
   GeneratedAssetBatchSummary,
   AnswerResult,
@@ -120,6 +134,7 @@ export {
   createStudyGoal,
   updateStudyGoal,
   getNextAction,
+  getNextLearningAction,
   listTemplates,
   applyTemplate,
   getForgettingForecast,
@@ -153,7 +168,9 @@ export type {
   AgentTaskReview,
   AgentTaskVerifierDiagnostics,
   LearningTemplate,
+  TemplateApplyResult,
   NextActionResponse,
+  NextLearningAction,
   StudyGoal,
   CreateGoalRequest,
   UpdateGoalRequest,
@@ -204,6 +221,11 @@ export type {
 
 export {
   listIngestionJobs,
+  listAllIngestionJobs,
+  retryIngestionJob,
+  clearFailedIngestionJobs,
+  planUploadSpaces,
+  listCourseFiles,
   syncCourse,
   createScrapeSource,
   listScrapeSources,
@@ -214,6 +236,13 @@ export {
 
 export type {
   IngestionJobSummary,
+  GlobalIngestionJob,
+  IngestionPageStats,
+  ProcessingWorkflowState,
+  UploadFileAnalysis,
+  UploadPlanGroup,
+  UploadPlan,
+  UploadedCourseFile,
   SyncResult,
   ScrapeSource,
 } from "./ingestion";

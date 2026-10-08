@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -71,7 +72,7 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <span className="text-muted-foreground animate-pulse">Loading...</span>
+        <span className="text-muted-foreground animate-pulse">{t("ui.loading")}</span>
       </div>
     );
   }
@@ -86,31 +87,36 @@ export default function AnalyticsPage() {
           type="button"
           onClick={() => router.push("/")}
           className="text-sm text-muted-foreground hover:text-foreground"
-          title="Back to dashboard"
+          title={t("ui.back_to_dashboard")}
         >
-          &larr; Back
+          &larr; {t("nav.back")}
         </button>
-        <h1 className="text-lg font-semibold text-foreground">Learning Analytics</h1>
+        <h1 className="text-lg font-semibold text-foreground">我的学习进步</h1>
         <div className="ml-auto" />
       </header>
 
       <div className="max-w-6xl mx-auto p-6 space-y-6" data-testid="analytics-page">
+        <section className="rounded-2xl border border-brand/20 bg-brand-muted/25 p-5">
+          <p className="text-sm font-semibold text-brand">学习小结</p>
+          <h2 className="mt-1 text-xl font-bold text-foreground">看看这段时间的努力，下一步更有方向。</h2>
+          <p className="mt-2 text-sm text-muted-foreground">这里的学习时长、练习和掌握情况都来自你的真实学习记录。</p>
+        </section>
         {/* Key Metrics */}
         <div className="grid md:grid-cols-4 gap-4">
           <MetricCard
-            label="Courses"
+            label="学习空间"
             value={String(overview?.total_courses ?? 0)}
           />
           <MetricCard
-            label="Average Mastery"
+            label="知识掌握情况"
             value={`${((overview?.average_mastery ?? 0) * 100).toFixed(0)}%`}
           />
           <MetricCard
-            label="Study Time"
+            label="累计学习时间"
             value={totalMinutes >= 60 ? `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m` : `${totalMinutes}m`}
           />
           <MetricCard
-            label="Quiz Questions"
+            label="完成练习题"
             value={String(trendData.reduce((sum, d) => sum + d.quiz_total, 0))}
           />
         </div>

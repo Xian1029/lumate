@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.progress import LearningProgress
 from models.content import CourseContentTree
+from services.learning_progress import course_progress_snapshot, course_progress_view
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,9 @@ async def get_course_progress(
 ) -> dict:
     """Get overall progress for a course."""
     nodes_result = await db.execute(
-        select(func.count(CourseContentTree.id))
-        .where(CourseContentTree.course_id == course_id)
+        select(CourseContentTree).where(CourseContentTree.course_id == course_id)
     )
-    total_nodes = nodes_result.scalar() or 0
+    nodes = list(nodes_result.scalars().all())
 
     progress_result = await db.execute(
         select(LearningProgress)
@@ -36,9 +36,13 @@ async def get_course_progress(
     )
     progress_entries = progress_result.scalars().all()
 
-    mastered = sum(1 for p in progress_entries if p.status == "mastered")
-    reviewed = sum(1 for p in progress_entries if p.status == "reviewed")
-    in_progress = sum(1 for p in progress_entries if p.status == "in_progress")
+    snapshot = course_progress_snapshot(nodes, progress_entries)
+    learning_progress = course_progress_view(snapshot)
+    # Keep all progress analytics on the same learnable-node denominator used
+    # by the home learning-space cards.
+    mastered = sum(1 for p in snapshot.progress_by_node.values() if p.status == "mastered")
+    reviewed = sum(1 for p in snapshot.progress_by_node.values() if p.status == "reviewed")
+    in_progress = sum(1 for p in snapshot.progress_by_node.values() if p.status == "in_progress")
     total_time = sum(p.time_spent_minutes for p in progress_entries)
     avg_mastery = (
         sum(p.mastery_score for p in progress_entries) / len(progress_entries)
@@ -51,14 +55,17 @@ async def get_course_progress(
 
     return {
         "course_id": str(course_id),
-        "total_nodes": total_nodes,
+        # Canonical learner-facing contract. Keep the legacy analytics fields
+        # below for charts, but no UI should recalculate completion itself.
+        "learning_progress": learning_progress,
+        "total_nodes": snapshot.total_count,
         "mastered": mastered,
         "reviewed": reviewed,
         "in_progress": in_progress,
-        "not_started": max(0, total_nodes - mastered - reviewed - in_progress),
+        "not_started": max(0, snapshot.total_count - mastered - reviewed - in_progress),
         "total_study_minutes": total_time,
         "average_mastery": avg_mastery,
-        "completion_percent": (mastered + reviewed) / max(total_nodes, 1) * 100,
+        "completion_percent": learning_progress["progress_percent"] or 0,
         "gap_type_breakdown": gap_type_breakdown,
     }
 

@@ -146,6 +146,21 @@ async def resolve_next_action(
     return decision
 
 
+async def get_next_learning_action(
+    user_id: uuid.UUID,
+    db: AsyncSession,
+) -> AgendaDecision:
+    """Return the single highest-priority learning action for a user.
+
+    Unlike ``resolve_next_action``, this intentionally evaluates signals from
+    every course.  It is the boundary used by the personal learning home: the
+    client renders the returned decision, but never re-ranks goals, reviews,
+    deadlines, or activity on its own.
+    """
+    signals = await collect_signals(user_id, None, db=db)
+    return rank_signals(signals)
+
+
 async def queue_decision(
     decision: AgendaDecision,
     *,

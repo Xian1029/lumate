@@ -15,6 +15,7 @@ async def auto_generate_notes(
 ) -> int:
     """Phase 4: Auto-generate AI notes for content nodes after ingestion."""
     from models.content import CourseContentTree
+    from services.content_text import is_assessment_content
     from services.parser.notes import restructure_notes
     from services.generated_assets import save_generated_asset
 
@@ -29,25 +30,35 @@ async def auto_generate_notes(
         )
         nodes = result.scalars().all()
 
-        # Filter to nodes with meaningful content (>200 chars)
-        eligible = [n for n in nodes if n.content and len(n.content) > 200]
+        # Notes are the canonical source for later cards and questions. Never
+        # create them from document containers, contents pages, or front matter.
+        eligible = [
+            n for n in nodes
+            if is_assessment_content(
+                n.title, n.content, content_category=n.content_category, level=n.level,
+            ) and len(n.content or "") > 200
+        ]
         if not eligible:
             return 0
 
-        # Process top 5 nodes in parallel for speed (30s target)
+        # Process every eligible textbook section with bounded concurrency.
+        # A small limit avoids provider rate spikes on full-book uploads while
+        # ensuring later chapters are not silently left without notes.
         import asyncio as _asyncio
+        semaphore = _asyncio.Semaphore(2)
 
         async def _gen_one(node):
             try:
                 content_trimmed = node.content[:4000] if node.content else ""
-                ai_content = await _asyncio.wait_for(
-                    restructure_notes(
-                        content_trimmed,
-                        node.title,
-                        note_format="bullet_point",
-                    ),
-                    timeout=20,
-                )
+                async with semaphore:
+                    ai_content = await _asyncio.wait_for(
+                        restructure_notes(
+                            content_trimmed,
+                            node.title,
+                            note_format="bullet_point",
+                        ),
+                        timeout=45,
+                    )
                 if ai_content and len(ai_content) > 50:
                     return (node, ai_content)
             except _asyncio.TimeoutError:
@@ -60,7 +71,7 @@ async def auto_generate_notes(
                 logger.exception("Auto-generate notes failed for '%s'", node.title)
             return None
 
-        results = await _asyncio.gather(*[_gen_one(n) for n in eligible[:5]], return_exceptions=True)
+        results = await _asyncio.gather(*[_gen_one(n) for n in eligible], return_exceptions=True)
         for res in results:
             if isinstance(res, BaseException):
                 logger.warning("Auto-generate gather returned exception: %s", res)

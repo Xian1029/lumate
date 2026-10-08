@@ -24,8 +24,8 @@ export function ContentNodeItem({ node, depth = 0 }: ContentNodeItemProps) {
   return (
     <div
       id={`content-${node.id}`}
-      className="mb-4"
-      style={{ paddingLeft: depth > 0 ? `${depth * 16}px` : undefined }}
+      className="mb-6 min-w-0"
+      style={{ marginInlineStart: depth > 0 ? `${Math.min(depth, 3) * 12}px` : undefined }}
     >
       {(() => {
         const Tag = `h${headingLevel}` as keyof React.JSX.IntrinsicElements;
@@ -34,7 +34,7 @@ export function ContentNodeItem({ node, depth = 0 }: ContentNodeItemProps) {
       {node.content ? (
         <MarkdownRenderer
           content={node.content}
-          className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert"
+          className="max-w-none min-w-0 break-words text-sm leading-7"
         />
       ) : null}
       {node.children?.map((child) => (

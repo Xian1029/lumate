@@ -8,6 +8,7 @@ import {
   rejectAgentTask,
   markTaskNotificationsRead,
   listStudyGoals,
+  updateStudyGoal,
   type AgentTask,
   type AgentTaskReview,
   type AgentTaskStepResult,
@@ -39,7 +40,39 @@ function statusLabel(status: string, t: (key: string) => string): string {
   const key = `activity.status.${status}`;
   const translated = t(key);
   if (translated !== key) return translated;
-  return status.replaceAll("_", " ");
+  const fallback: Record<string, string> = {
+    active: "进行中",
+    pending_approval: "等待确认",
+    running: "正在进行",
+    completed: "已完成",
+    failed: "需要处理",
+    queued: "等待开始",
+    cancelled: "已取消",
+    rejected: "未采用",
+    paused: "已暂停",
+  };
+  return fallback[status] ?? "待处理";
+}
+
+function translatedOrFallback(key: string, fallback: string, t: (key: string) => string): string {
+  const translated = t(key);
+  return translated === key ? fallback : translated;
+}
+
+function taskTitle(task: AgentTask, t: (key: string) => string): string {
+  return translatedOrFallback(`activity.task.${task.task_type}.title`, t("activity.task.fallback.title"), t);
+}
+
+function taskSummary(task: AgentTask, t: (key: string) => string): string | null {
+  const fallback = t("activity.task.fallback.summary");
+  const value = translatedOrFallback(`activity.task.${task.task_type}.summary`, fallback, t);
+  return value || null;
+}
+
+function taskMeta(task: AgentTask, t: (key: string) => string): string {
+  const type = translatedOrFallback(`activity.taskType.${task.task_type}`, t("activity.taskType.other"), t);
+  const source = translatedOrFallback(`activity.source.${task.source}`, t("activity.source.other"), t);
+  return `${type} · ${source}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -157,8 +190,27 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       const updated = await fn(taskId);
       await markTaskNotificationsRead(taskId).catch(() => undefined);
       setTasks((prev) => prev.map((tk) => (tk.id === taskId ? updated : tk)));
+      if (fn === approveAgentTask) {
+        setGoals(await listStudyGoals(courseId));
+      }
     } catch { /* keep current state */ } finally {
       setActing((s) => { const n = new Set(s); n.delete(taskId); return n; });
+    }
+  };
+
+  const updateGoal = async (goal: StudyGoal, action: "complete" | "delay" | "restore") => {
+    setActing((current) => new Set(current).add(goal.id));
+    try {
+      const targetDate = goal.target_date ? new Date(goal.target_date) : new Date();
+      if (action === "delay") targetDate.setDate(targetDate.getDate() + 1);
+      const updated = await updateStudyGoal(goal.id, action === "complete"
+        ? { status: "completed" }
+        : action === "restore"
+          ? { status: "active" }
+          : { status: "active", target_date: targetDate.toISOString().split("T")[0] });
+      setGoals((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } finally {
+      setActing((current) => { const next = new Set(current); next.delete(goal.id); return next; });
     }
   };
 
@@ -200,26 +252,27 @@ export function ActivityView({ courseId }: ActivityViewProps) {
   /* ---------- Render ---------- */
 
   return (
-    <div role="region" aria-label="Agent activity" className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto scrollbar-thin">
+    <div role="region" aria-label={t("ui.agent_activity")} className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto scrollbar-thin">
       {/* Pending approval */}
       {pending.length > 0 && (
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400 mb-2">
+          <h3 className="text-sm font-semibold text-foreground mb-1">
             {tf("activity.needsApproval", { count: pending.length })}
           </h3>
+          <p className="mb-2 text-xs leading-5 text-muted-foreground">{t("activity.approvalHelp")}</p>
           <div className="flex flex-col gap-2">
             {pending.map((tk) => (
               <div key={tk.id} className="rounded-2xl card-shadow bg-card p-3.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{tk.title}</p>
-                    {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
-                    <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
+                    <p className="text-sm font-medium truncate">{taskTitle(tk, t)}</p>
+                    {taskSummary(tk, t) && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{taskSummary(tk, t)}</p>}
+                    <p className="text-[10px] text-muted-foreground mt-1">{taskMeta(tk, t)}</p>
                     <GuidedSessionButton task={tk} courseId={courseId} t={t} />
                   </div>
                   <div className="flex gap-1.5 shrink-0">
-                    <Button size="sm" disabled={acting.has(tk.id)} onClick={() => act(tk.id, approveAgentTask)}>{t("activity.approve")}</Button>
-                    <Button size="sm" variant="outline" disabled={acting.has(tk.id)} onClick={() => act(tk.id, rejectAgentTask)}>{t("activity.reject")}</Button>
+                    <Button size="sm" disabled={acting.has(tk.id)} onClick={() => act(tk.id, approveAgentTask)}>{t("activity.approveChild")}</Button>
+                    <Button size="sm" variant="outline" disabled={acting.has(tk.id)} onClick={() => act(tk.id, rejectAgentTask)}>{t("activity.rejectChild")}</Button>
                   </div>
                 </div>
               </div>
@@ -239,11 +292,11 @@ export function ActivityView({ courseId }: ActivityViewProps) {
             {grouped[status].map((tk) => (
               <div key={tk.id} className="rounded-xl bg-muted/30 p-3.5 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium truncate flex-1">{tk.title}</span>
+                  <span className="font-medium truncate flex-1">{taskTitle(tk, t)}</span>
                   <Badge variant="outline" className={statusColor(tk.status)}>{statusLabel(tk.status, t)}</Badge>
                 </div>
-                {tk.summary && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{tk.summary}</p>}
-                <p className="text-[10px] text-muted-foreground mt-1">{tk.task_type} &middot; {tk.source}</p>
+                {taskSummary(tk, t) && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{taskSummary(tk, t)}</p>}
+                <p className="text-[10px] text-muted-foreground mt-1">{taskMeta(tk, t)}</p>
                 <GuidedSessionButton task={tk} courseId={courseId} t={t} />
                 {(() => {
                   const review = getTaskReview(tk);
@@ -314,22 +367,36 @@ export function ActivityView({ courseId }: ActivityViewProps) {
       ))}
 
       {/* Goals */}
-      {goals.length > 0 && (
+      {goals.some((goal) => goal.status !== "archived") && (
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-            {tf("activity.goals", { count: goals.length })}
+          <h3 className="text-sm font-semibold text-foreground mb-1">
+            我的学习任务
           </h3>
+          <p className="mb-2 text-xs text-muted-foreground">自建任务和小助手安排的任务使用同一份进度。</p>
           <div className="flex flex-col gap-1.5">
-            {goals.map((g) => (
+            {goals.filter((goal) => goal.status !== "archived").map((g) => (
               <div key={g.id} className="rounded-xl bg-muted/30 p-3.5">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium truncate flex-1">{g.title}</span>
                   <Badge variant="secondary" className="text-[10px]">{statusLabel(g.status, t)}</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">{g.objective}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {g.metadata_json?.source === "assistant" ? "小助手安排" : "我创建的任务"}
+                </p>
                 {g.current_milestone && <p className="text-[10px] text-muted-foreground mt-1">{t("activity.milestone")}: {g.current_milestone}</p>}
                 {g.next_action && <p className="text-[10px] text-muted-foreground">{t("activity.next")}: {g.next_action}</p>}
                 {g.target_date && <p className="text-[10px] text-muted-foreground">{t("activity.target")}: {g.target_date}</p>}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {g.status === "completed" ? (
+                    <Button size="sm" variant="outline" disabled={acting.has(g.id)} onClick={() => void updateGoal(g, "restore")}>恢复</Button>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" disabled={acting.has(g.id)} onClick={() => void updateGoal(g, "delay")}>延后 1 天</Button>
+                      <Button size="sm" disabled={acting.has(g.id)} onClick={() => void updateGoal(g, "complete")}>完成</Button>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>

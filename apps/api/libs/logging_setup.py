@@ -112,7 +112,10 @@ def configure_logging() -> None:
     root.setLevel(log_level)
 
     # Quiet noisy third-party loggers
-    for noisy in ("uvicorn.access", "httpcore", "httpx", "openai", "anthropic"):
+    # ``aiosqlite`` emits every SQL operation at DEBUG.  In local development
+    # that can flood api.log during startup/seeding and obscure an actual
+    # startup failure, while the application logger remains fully available.
+    for noisy in ("uvicorn.access", "httpcore", "httpx", "openai", "anthropic", "aiosqlite"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Add file handler if configured

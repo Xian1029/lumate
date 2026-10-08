@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # LLM — primary provider selection
     llm_provider: str = "ollama"  # ollama | openai | anthropic | deepseek | openrouter | gemini | groq | vllm | lmstudio | textgenwebui | custom
     llm_model: str = "llama3.2:3b"
+    llm_trust_env: bool = False  # Opt in to HTTP(S)_PROXY for LLM traffic
 
     # Cloud providers
     openai_api_key: str = ""
@@ -62,12 +63,16 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
 
     # CORS
-    cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
+    # Local launcher may intentionally select another free frontend port.
+    # Keep a bounded local range rather than failing CORS after a restart.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3003,http://127.0.0.1:3003"
 
     # File Upload
     upload_dir: str = "./uploads"
-    max_upload_size_mb: int = 50
+    max_upload_size_mb: int = 500
     scrape_fixture_dir: str = ""
+    ingestion_max_retry_attempts: int = 3
+    provisional_workspace_cleanup_hours: int = 24
 
     # Embedding
     embedding_mode: str = "auto"  # auto | eager | skip
@@ -82,7 +87,10 @@ class Settings(BaseSettings):
     app_run_activity_engine: bool = False
     ambient_monitor_enabled: bool = True
     enable_experimental_loom: bool = False
-    enable_experimental_lector: bool = False
+    # Smart review is a core learning-space capability. Keep it enabled by
+    # default so the UI can never advertise a review session whose endpoint is
+    # intentionally forced to return an empty list.
+    enable_experimental_lector: bool = True
     enable_experimental_notion_export: bool = False
     enable_experimental_cat: bool = False              # CAT adaptive diagnostic pretest
     enable_experimental_browser: bool = False          # Browser automation (web_search agent tool)
@@ -98,6 +106,10 @@ class Settings(BaseSettings):
 
     # SSE streaming
     sse_timeout_seconds: int = 300
+
+    # Semantic grading must never stall a whole answer-submit request: the LLM
+    # call is bounded and degrades to NEEDS_REVIEW (never wrong) on timeout.
+    semantic_grading_timeout_seconds: float = 12.0
 
     # Parallel execution
     parallel_context_loading: bool = True

@@ -29,9 +29,78 @@ from services.activity.task_types import (
     infer_task_policy,
 )
 from services.agent.verifier import verify_and_repair
+from services.parser.notes import normalize_generated_markdown
+from services.parser.quiz import _enforce_quality_mix, cap_question_batch, source_supports_coding
 from services.scheduler import engine as scheduler_engine
 from routers.preferences_crud import build_learning_profile_summary
 from services.preference.engine import resolve_preferences
+
+
+def test_coding_questions_require_explicit_programming_source():
+    math_lesson = "机器人单价为 p 元，商店打九折出售，求实际售价。"
+    assert not source_supports_coding("有理数的应用", math_lesson)
+    assert source_supports_coding("Python 变量", "使用 print() 输出变量的计算结果。")
+
+
+def test_quiz_quality_gate_caps_true_false_and_foundation_questions():
+    questions = [
+        {"question_type": "tf", "difficulty_layer": 1, "question": "判断一"},
+        {"question_type": "tf", "difficulty_layer": 1, "question": "判断二"},
+        {"question_type": "fill_blank", "difficulty_layer": 1, "question": "识记填空"},
+        {"question_type": "mc", "difficulty_layer": 2, "question": "情境应用"},
+        {"question_type": "short_answer", "difficulty_layer": 2, "question": "两步推理"},
+        {"question_type": "short_answer", "difficulty_layer": 3, "question": "变式迁移"},
+    ]
+
+    kept, discarded, warnings = _enforce_quality_mix(questions, title="有理数")
+
+    assert sum(item["question_type"] == "tf" for item in kept) == 1
+    assert sum(item["difficulty_layer"] == 1 for item in kept) <= 2
+    assert sum(item["difficulty_layer"] >= 2 for item in kept) == 3
+    assert discarded == 1
+    assert warnings
+
+
+def test_question_batch_never_exceeds_fifteen_items():
+    kept, discarded, warnings = cap_question_batch(list(range(18)), title="有理数练习")
+
+    assert kept == list(range(15))
+    assert discarded == 3
+    assert warnings
+
+
+def test_generated_note_normalizer_repairs_encoding_and_removes_invisible_controls():
+    # "中文" incorrectly decoded as Latin-1, plus a transport control.
+    assert normalize_generated_markdown("ä¸­æ–‡\x00\ufeff") == "中文"
+
+
+def test_problem_metadata_keeps_curriculum_anchor_and_worked_solution():
+    normalized = normalize_problem_annotation(
+        {
+            "question_type": "short_answer",
+            "question": "气温从 3℃ 下降 8℃，请用有理数计算最终温度。",
+            "correct_answer": "-5℃",
+            "explanation": "用 3+(-8) 计算，结果为 -5℃。",
+            "difficulty_layer": 2,
+            "problem_metadata": {
+                "core_concept": "有理数加法",
+                "bloom_level": "apply",
+                "source_anchor": "§2.1 有理数加法法则",
+                "question_role": "improvement",
+                "solution_steps": ["把下降 8℃ 表示为 -8", "计算 3+(-8)"],
+                "common_mistake": "把下降误写成 +8",
+                "method_summary": "先把方向变化写成带符号的数，再计算。",
+            },
+        },
+        title="有理数的加法",
+        source="extracted",
+    )
+
+    metadata = normalized["problem_metadata"]
+    assert metadata["source_anchor"] == "§2.1 有理数加法法则"
+    assert metadata["question_role"] == "improvement"
+    assert len(metadata["solution_steps"]) == 2
+    assert metadata["common_mistake"] == "把下降误写成 +8"
 
 
 def test_rrf_score_formula():
@@ -967,6 +1036,7 @@ async def test_verifier_rejects_generic_nonanswer_for_learning_request():
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
         user_message="Explain binary search invariants",
+        response_language="en",
     )
     ctx.intent = IntentType.LEARN
     ctx.response = "I can help with that. Let's work through it together."
@@ -990,6 +1060,7 @@ async def test_verifier_records_acceptance_diagnostics_for_grounded_answer():
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
         user_message="Explain binary search invariants and boundary updates",
+        response_language="en",
     )
     ctx.intent = IntentType.LEARN
     ctx.content_docs = [
@@ -1025,6 +1096,7 @@ async def test_verifier_catches_socratic_violation_direct_answer():
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
         user_message="What is the present value formula?",
+        response_language="en",
     )
     ctx.intent = IntentType.LEARN
     ctx.content_docs = [{"title": "Present Value", "content": "PV = FV / (1+r)^n"}]
@@ -1052,6 +1124,7 @@ async def test_verifier_allows_socratic_answer_with_followup():
         user_id=uuid.uuid4(),
         course_id=uuid.uuid4(),
         user_message="What is the present value formula?",
+        response_language="en",
     )
     ctx.intent = IntentType.LEARN
     ctx.content_docs = [{"title": "Present Value", "content": "PV = FV / (1+r)^n"}]
@@ -1068,6 +1141,63 @@ async def test_verifier_allows_socratic_answer_with_followup():
     verified = await verify_and_repair(ctx, _Agent())
     # Should pass because the response contains Socratic counter-patterns
     assert verified.metadata["verifier"]["code"] != "socratic_violation_direct_answer"
+
+
+@pytest.mark.asyncio
+async def test_verifier_repairs_english_dominant_answer_for_chinese_ui():
+    class _Client:
+        async def chat(self, _system, _prompt, images=None):
+            return "我们先找出题目中的已知条件，再一步一步计算结果。你愿意先试试第一步吗？", {}
+
+    class _Agent:
+        def get_llm_client(self):
+            return _Client()
+
+        def build_system_prompt(self, _ctx):
+            return "请始终使用简体中文回答。"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="请帮我理解这道题",
+        response_language="zh",
+    )
+    ctx.intent = IntentType.LEARN
+    ctx.content_docs = [{"title": "例题", "content": "根据已知条件逐步计算。"}]
+    ctx.response = (
+        "First identify all known values in the problem. Then choose the correct formula "
+        "and calculate each step carefully before checking the final result."
+    )
+
+    verified = await verify_and_repair(ctx, _Agent())
+
+    assert verified.metadata["verifier"]["status"] == "repaired"
+    assert verified.metadata["verifier"]["code"] == "response_language_mismatch"
+    assert "我们先找出" in verified.response
+
+
+@pytest.mark.asyncio
+async def test_verifier_never_exposes_english_when_language_repair_fails():
+    class _Agent:
+        def get_llm_client(self):
+            raise RuntimeError("provider unavailable")
+
+        def build_system_prompt(self, _ctx):
+            return "system"
+
+    ctx = AgentContext(
+        user_id=uuid.uuid4(),
+        course_id=uuid.uuid4(),
+        user_message="请解释",
+        response_language="zh",
+    )
+    ctx.response = "This answer remains entirely in English and should never be shown to the student after verification."
+
+    verified = await verify_and_repair(ctx, _Agent())
+
+    assert verified.metadata["verifier"]["code"] == "response_language_mismatch"
+    assert verified.response.startswith("抱歉")
+    assert "This answer" not in verified.response
 
 
 @pytest.mark.asyncio

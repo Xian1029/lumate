@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { PracticeSection } from "@/components/sections/practice-section";
 import { ChatFab } from "@/components/chat/chat-fab";
@@ -22,6 +23,7 @@ export default function PracticePage() {
   );
 
   const { activeCourse, courses, fetchCourses, setActiveCourse } = useCourseStore();
+  const setSelectedNodeId = useWorkspaceStore((state) => state.setSelectedNodeId);
 
   useEffect(() => {
     if (courses.length === 0) void fetchCourses();
@@ -31,6 +33,11 @@ export default function PracticePage() {
     const course = courses.find((c) => c.id === courseId);
     if (course) setActiveCourse(course);
   }, [courseId, courses, setActiveCourse]);
+
+  useEffect(() => {
+    const nodeId = searchParams.get("node");
+    if (nodeId) setSelectedNodeId(nodeId);
+  }, [searchParams, setSelectedNodeId]);
 
   useEffect(() => {
     getHealthStatus()
@@ -43,6 +50,10 @@ export default function PracticePage() {
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
   const tab = (searchParams.get("tab") ?? "quiz") as "quiz" | "flashcards" | "review";
+  const requestedNodeId = searchParams.get("node");
+  const practiceExitHref = requestedNodeId
+    ? `/course/${courseId}?node=${encodeURIComponent(requestedNodeId)}`
+    : `/course/${courseId}`;
   const difficultyParam = searchParams.get("difficulty");
   const modeParam = searchParams.get("mode");
   const quizDifficultyHint =
@@ -59,7 +70,7 @@ export default function PracticePage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || t("course.practice")} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("course.practice")} courseId={courseId} backHref={practiceExitHref} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
         <PracticeSection
           courseId={courseId}
@@ -68,6 +79,8 @@ export default function PracticePage() {
           defaultTab={tab}
           quizDifficultyHint={quizDifficultyHint}
           quizModeHint={quizModeHint}
+          quizExitHref={practiceExitHref}
+          flashcardExitHref={practiceExitHref}
         />
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />

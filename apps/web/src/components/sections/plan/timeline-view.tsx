@@ -1,20 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { listStudyGoals, type StudyGoal } from "@/lib/api";
+import { listStudyGoals, updateStudyGoal, type StudyGoal } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 interface TimelineViewProps {
   courseId: string;
 }
 
-const URGENCY_COLORS = {
-  overdue: "bg-destructive text-destructive-foreground",
-  soon: "bg-warning text-warning-foreground",
-  normal: "bg-brand text-brand-foreground",
-  future: "bg-muted text-muted-foreground",
-};
+type Urgency = "overdue" | "soon" | "normal" | "future";
 
-function getUrgency(daysLeft: number): keyof typeof URGENCY_COLORS {
+function getUrgency(daysLeft: number): Urgency {
   if (daysLeft < 0) return "overdue";
   if (daysLeft <= 7) return "soon";
   if (daysLeft <= 30) return "normal";
@@ -31,6 +28,7 @@ function formatDaysLeft(daysLeft: number): string {
 export function TimelineView({ courseId }: TimelineViewProps) {
   const [goals, setGoals] = useState<StudyGoal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actingId, setActingId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -44,12 +42,32 @@ export function TimelineView({ courseId }: TimelineViewProps) {
 
   // Sort goals with deadlines, then without
   const sorted = useMemo(() => {
-    const withDate = goals
+    const visible = goals.filter((g) => g.status !== "archived");
+    const withDate = visible
       .filter((g) => g.target_date)
       .sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
-    const withoutDate = goals.filter((g) => !g.target_date);
+    const withoutDate = visible.filter((g) => !g.target_date);
     return [...withDate, ...withoutDate];
   }, [goals]);
+
+  const updateGoal = async (goal: StudyGoal, action: "complete" | "delay" | "restore") => {
+    setActingId(goal.id);
+    try {
+      const date = goal.target_date ? new Date(goal.target_date) : new Date();
+      if (action === "delay") date.setDate(date.getDate() + 1);
+      const updated = await updateStudyGoal(goal.id, action === "complete"
+        ? { status: "completed" }
+        : action === "restore"
+          ? { status: "active" }
+          : { status: "active", target_date: date.toISOString().split("T")[0] });
+      setGoals((current) => current.map((item) => item.id === updated.id ? updated : item));
+      toast.success(action === "complete" ? "任务已完成" : action === "delay" ? "已延后 1 天" : "任务已恢复");
+    } catch (error) {
+      toast.error((error as Error).message || "操作失败，请稍后再试");
+    } finally {
+      setActingId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -132,6 +150,10 @@ export function TimelineView({ courseId }: TimelineViewProps) {
         </div>
       </div>
 
+      <div className="rounded-xl border border-border/60 bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
+        按日期查看接下来要做什么。完成后会保留在时间线中；需要更多时间可延后，误点完成也可以恢复。
+      </div>
+
       {/* Goal rows */}
       <div className="space-y-2">
         {sorted.map((goal) => {
@@ -148,14 +170,6 @@ export function TimelineView({ courseId }: TimelineViewProps) {
                 : urgency === "normal"
                   ? "bg-brand"
                   : "bg-muted-foreground/40";
-
-          // Progress bar width from completion_percent or status
-          const progressPct =
-            goal.status === "completed"
-              ? 100
-              : goal.status === "active"
-                ? 30
-                : 0;
 
           return (
             <div
@@ -175,15 +189,21 @@ export function TimelineView({ courseId }: TimelineViewProps) {
                     </span>
                   )}
                 </div>
-                {/* Progress bar */}
-                {progressPct > 0 && (
-                  <div className="mt-1.5 h-1 rounded-full bg-muted/50 overflow-hidden">
-                    <div
-                      className="h-full bg-brand rounded-full transition-all duration-500"
-                      style={{ width: `${progressPct}%` }}
-                    />
-                  </div>
-                )}
+                <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{goal.objective}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {goal.metadata_json?.source === "assistant" ? "小助手安排" : "我创建的任务"}
+                  {typeof goal.metadata_json?.plan_day === "number" ? ` · 第 ${goal.metadata_json.plan_day} 天` : ""}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {goal.status === "completed" ? (
+                    <Button size="sm" variant="outline" disabled={actingId === goal.id} onClick={() => void updateGoal(goal, "restore")}>恢复任务</Button>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" disabled={actingId === goal.id} onClick={() => void updateGoal(goal, "delay")}>延后 1 天</Button>
+                      <Button size="sm" disabled={actingId === goal.id} onClick={() => void updateGoal(goal, "complete")}>标记完成</Button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Deadline */}

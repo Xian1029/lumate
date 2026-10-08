@@ -46,7 +46,7 @@ export function ConnectionStatus() {
       className="fixed top-0 left-0 right-0 z-[60] bg-destructive/90 text-destructive-foreground text-center py-2 text-xs font-medium flex items-center justify-center gap-2 animate-slide-up"
     >
       <WifiOff className="size-3.5" />
-      You are offline. Changes will sync when reconnected.
+      当前处于离线状态，恢复连接后会自动同步你的学习进度。
     </div>
   );
 }

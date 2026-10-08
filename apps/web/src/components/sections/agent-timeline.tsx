@@ -313,9 +313,9 @@ export function AgentTimeline({ courseId }: AgentTimelineProps) {
                         </p>
                       )}
                       {run.error_message && (
-                        <p className="text-[11px] text-destructive">
+                        <p className="text-[11px] text-destructive" title={run.error_message}>
                           <span className="font-medium">{t("agent.timeline.error")} </span>
-                          {run.error_message}
+                          {t("agent.timeline.errorHint")}
                         </p>
                       )}
                     </div>

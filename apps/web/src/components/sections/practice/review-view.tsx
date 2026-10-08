@@ -53,7 +53,11 @@ export function ReviewView({
         question: string;
         options: Record<string, string> | null;
         selectedAnswer?: string;
+        isCorrect?: boolean;
+        correctAnswer?: string | null;
+        explanation?: string | null;
         diagnosis?: string;
+        interpretation?: string;
         pending?: boolean;
       }
     >
@@ -124,6 +128,8 @@ export function ReviewView({
           problemId: result.problem_id,
           question: result.question,
           options: result.options,
+          correctAnswer: result.correct_answer,
+          explanation: result.explanation,
         },
       }));
     } catch (error) {
@@ -143,14 +149,18 @@ export function ReviewView({
     }));
 
     try {
-      await submitAnswer(draft.problemId, answer);
+      const answerResult = await submitAnswer(draft.problemId, answer);
       const diagnosis = await diagnoseWrongAnswer(wrongAnswerId);
       setDiagnosticDrafts((prev) => ({
         ...prev,
         [wrongAnswerId]: {
           ...prev[wrongAnswerId],
           selectedAnswer: answer,
+          isCorrect: answerResult.is_correct,
+          correctAnswer: answerResult.correct_answer ?? prev[wrongAnswerId].correctAnswer,
+          explanation: answerResult.explanation ?? prev[wrongAnswerId].explanation,
           diagnosis: diagnosis.diagnosis,
+          interpretation: diagnosis.interpretation,
           pending: false,
         },
       }));
@@ -191,7 +201,7 @@ export function ReviewView({
         <span>{t("review.mistakesReady").replace("{count}", String(wrongAnswers.length))}</span>
         <Button size="sm" onClick={() => void handleGenerateReview()} disabled={!aiActionsEnabled || generating}>
           {generating ? <span className="mr-1 animate-pulse">...</span> : null}
-          {t("review.generateReview")}
+          {generating ? "正在整理…" : "帮我整理错题"}
         </Button>
       </div>
 
@@ -200,15 +210,20 @@ export function ReviewView({
         {stats ? (
           <div className="rounded-2xl card-shadow bg-card p-4 space-y-3" data-testid="review-stats">
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{t("review.statsTotal").replace("{count}", String(stats.total))}</Badge>
-              <Badge variant="outline">{t("review.statsUnmastered").replace("{count}", String(stats.unmastered))}</Badge>
-              <Badge variant="outline">{t("review.statsMastered").replace("{count}", String(stats.mastered))}</Badge>
+              <Badge variant="outline">做过 {stats.total} 道错题</Badge>
+              <Badge variant="outline">还要练 {stats.unmastered} 道</Badge>
+              <Badge variant="outline">已经学会 {stats.mastered} 道</Badge>
             </div>
             {diagnosisSummary.length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {diagnosisSummary.map(([label, count]) => (
                   <Badge key={label} variant="secondary">
-                    {label.replaceAll("_", " ")}: {count}
+                    {{
+                      fundamental_gap: "基础还要练",
+                      trap_vulnerability: "容易被题目绕住",
+                      carelessness: "步骤需要检查",
+                      mastered: "已经学会",
+                    }[label] ?? "继续练习"}：{count} 道
                   </Badge>
                 ))}
               </div>

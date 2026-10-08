@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { useRef } from "react";
+import { fireEvent } from "@testing-library/react";
 import { render, screen } from "@/test-utils";
 import { useRovingTabindex } from "./use-roving-tabindex";
 
@@ -8,6 +9,7 @@ function RovingHarness({ orientation = "vertical" }: { orientation?: "horizontal
   useRovingTabindex(ref, orientation);
   return (
     <div ref={ref} data-testid="container">
+      <input aria-label="answer" defaultValue="123" />
       <div role="option" aria-selected={true} tabIndex={0} data-testid="item-0">A</div>
       <div role="option" aria-selected={false} tabIndex={-1} data-testid="item-1">B</div>
       <div role="option" aria-selected={false} tabIndex={-1} data-testid="item-2">C</div>
@@ -64,5 +66,18 @@ describe("useRovingTabindex", () => {
     expect(document.activeElement).toBe(screen.getByTestId("item-1"));
     await user.keyboard("{ArrowLeft}");
     expect(document.activeElement).toBe(screen.getByTestId("item-0"));
+  });
+
+  it("does not intercept navigation keys from editable controls", () => {
+    render(<RovingHarness orientation="both" />);
+    const input = screen.getByRole("textbox", { name: "answer" });
+    input.focus();
+
+    expect(fireEvent.keyDown(input, { key: "ArrowLeft" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "ArrowRight" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "Home" })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: "End" })).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId("item-0")).toHaveAttribute("tabindex", "0");
   });
 });

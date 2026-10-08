@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Plus, Lock } from "lucide-react";
+import { Plus, Lock, RotateCcw } from "lucide-react";
 import { USER_ADDABLE_BLOCKS, BLOCK_REGISTRY } from "@/lib/block-system/registry";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useCourseStore } from "@/store/course";
@@ -9,11 +9,15 @@ import { isBlockUnlocked, getUnlockContext } from "@/lib/block-system/feature-un
 import { useParams } from "next/navigation";
 import { useT } from "@/lib/i18n-context";
 import { recordBlockEvent } from "@/hooks/use-block-engagement";
+import { buildLayoutFromMode } from "@/lib/block-system/templates";
 
 export function BlockPalette() {
   const t = useT();
   const [open, setOpen] = useState(false);
   const addBlock = useWorkspaceStore((s) => s.addBlock);
+  const showBlock = useWorkspaceStore((s) => s.showBlock);
+  const resetLayout = useWorkspaceStore((s) => s.resetLayout);
+  const blocks = useWorkspaceStore((s) => s.spaceLayout.blocks);
   const mode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const courses = useCourseStore((s) => s.courses);
   const params = useParams();
@@ -29,7 +33,7 @@ export function BlockPalette() {
   );
 
   return (
-    <div className="relative flex justify-center">
+    <div className="relative flex justify-center gap-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -41,6 +45,18 @@ export function BlockPalette() {
         <Plus className="size-4" />
         {t("block.addBlock")}
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (window.confirm("恢复默认工作区布局？这不会删除笔记、错题、计划或学习进度。")) {
+            resetLayout(buildLayoutFromMode(mode ?? "course_following"));
+          }
+        }}
+        className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-2.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        title="恢复默认工作区布局"
+      >
+        <RotateCcw className="size-3.5" /> 恢复默认
+      </button>
 
       {open && (
         <>
@@ -48,11 +64,12 @@ export function BlockPalette() {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
 
           {/* Palette dropdown */}
-          <div role="menu" aria-label="Add block" className="absolute bottom-full mb-2 z-50 w-72 max-h-80 overflow-auto rounded-2xl bg-popover p-2 animate-slide-up" style={{ boxShadow: "var(--shadow-elevated)" }}>
+          <div role="menu" aria-label={t("ui.add_block")} className="absolute bottom-full mb-2 z-50 w-72 max-h-80 overflow-auto rounded-2xl bg-popover p-2 animate-slide-up" style={{ boxShadow: "var(--shadow-elevated)" }}>
             {USER_ADDABLE_BLOCKS.map((type) => {
               const entry = BLOCK_REGISTRY[type];
               if (!entry) return null;
               const { unlocked, unlockHint } = isBlockUnlocked(type, ctxWithMode);
+              const existing = blocks.find((block) => block.type === type);
               return (
                 <button
                   key={type}
@@ -61,8 +78,13 @@ export function BlockPalette() {
                   disabled={!unlocked}
                   onClick={() => {
                     if (!unlocked) return;
-                    addBlock(type);
-                    recordBlockEvent(courseId, type, "manual_add");
+                    if (existing && !existing.isVisible) {
+                      showBlock(existing.id);
+                      recordBlockEvent(courseId, type, "manual_add");
+                    } else {
+                      addBlock(type);
+                      recordBlockEvent(courseId, type, "manual_add");
+                    }
                     setOpen(false);
                   }}
                   className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left transition-colors ${
@@ -72,9 +94,9 @@ export function BlockPalette() {
                   }`}
                 >
                   <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-sm font-medium text-foreground">{entry.label}</span>
+                    <span className="text-sm font-medium text-foreground">{existing && !existing.isVisible ? `显示${t(entry.labelKey)}` : t(entry.labelKey)}</span>
                     <span className="text-xs text-muted-foreground truncate">
-                      {unlocked ? entry.description : unlockHint}
+                      {unlocked ? t(entry.descriptionKey) : unlockHint}
                     </span>
                   </div>
                   {!unlocked && <Lock className="size-3.5 text-muted-foreground shrink-0" />}

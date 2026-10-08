@@ -4,7 +4,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import Index, String, DateTime, ForeignKey, Text, Integer, Boolean, func
+from sqlalchemy import Index, String, DateTime, ForeignKey, Text, Integer, Boolean, JSON, func
 from models.compat import CompatUUID, CompatJSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,6 +82,10 @@ class PracticeResult(Base):
     # conceptual | procedural | computational | reading | careless
     difficulty_layer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     answer_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Unified grading evidence (answer-grader-v2+): match_type, confidence,
+    # reason, grader_version, semantic usage, per-blank results. Nullable so
+    # rows written by the legacy grader remain valid.
+    grading_meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

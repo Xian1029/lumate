@@ -80,7 +80,7 @@ export function MessageList({ messages }: MessageListProps) {
 
   if (messages.length === 0) {
     return (
-      <div role="status" aria-label="No messages" className="flex flex-1 items-center justify-center p-6 animate-fade-in">
+      <div role="status" aria-label={t("ui.no_messages")} className="flex flex-1 items-center justify-center p-6 animate-fade-in">
         <div className="text-center">
           <MessageSquare className="mx-auto mb-3 size-8 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">
@@ -95,7 +95,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-relevant="additions" aria-label="Chat messages">
+    <div ref={parentRef} className="flex-1 overflow-auto scrollbar-thin" role="log" aria-live="polite" aria-relevant="additions" aria-label={t("ui.chat_messages")}>
       {isMockLlm && (
         <div role="status" className="sticky top-0 z-10 flex items-center gap-2 bg-warning/10 border-b border-warning/30 px-3 py-1.5 text-xs text-warning">
           <AlertTriangle className="size-3.5 shrink-0" />
@@ -157,12 +157,12 @@ export function MessageList({ messages }: MessageListProps) {
 
       {/* Error banner with retry */}
       {error && !isStreaming && (
-        <div role="alert" className="sticky bottom-0 mx-3 mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive animate-fade-in">
+        <div role="alert" className="sticky bottom-0 mx-3 mb-2 flex max-w-full items-start gap-2 overflow-hidden rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive shadow-sm animate-fade-in">
           <AlertCircle className="size-4 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="font-medium">{errorLabels[errorCategory ?? "generic"]}</p>
+          <div className="min-w-0 flex-1">
+            <p className="break-words font-medium leading-5">{errorLabels[errorCategory ?? "generic"]}</p>
             {errorCategory === "generic" && error !== errorLabels.generic && (
-              <p className="mt-0.5 opacity-70 truncate">{error}</p>
+              <p className="mt-0.5 line-clamp-2 break-all leading-4 opacity-70">{error}</p>
             )}
           </div>
           {activeCourseId && messages.length > 0 && (
@@ -176,7 +176,7 @@ export function MessageList({ messages }: MessageListProps) {
                   });
                 }
               }}
-              className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs font-medium hover:bg-destructive/10 transition-colors shrink-0"
+              className="flex shrink-0 items-center gap-1 self-center rounded-lg border border-destructive/30 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-destructive/10"
               aria-label={t("chat.retryLabel")}
             >
               <RotateCcw className="size-3" />

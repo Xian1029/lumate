@@ -4,6 +4,7 @@ Extracted from base.py: system prompt construction with template rendering,
 memory formatting, tutor notes, and fallback Python-based prompt assembly.
 """
 
+import json
 import logging
 
 from services.agent.state import AgentContext
@@ -74,10 +75,39 @@ class PromptBuildingMixin:
             tutor_notes_section=self._build_tutor_notes_text(ctx),
         )
         if template_result is not None:
-            return template_result
+            base_prompt = template_result
+        else:
+            # --- Fallback: original Python-based prompt construction ---
+            base_prompt = self._build_fallback_prompt(ctx)
 
-        # --- Fallback: original Python-based prompt construction ---
-        return self._build_fallback_prompt(ctx)
+        language = (ctx.response_language or ctx.preferences.get("language") or "zh").lower()
+        if language.startswith("zh"):
+            language_contract = (
+                "## Mandatory response language (highest priority)\n"
+                "Respond entirely in natural Simplified Chinese. This rule applies to every turn, "
+                "including long conversations, tool results, citations, headings, explanations, and retries. "
+                "Do not follow the language of older assistant messages. Keep proper nouns, formulas, code, "
+                "and source filenames unchanged only when translation would make them incorrect."
+            )
+        else:
+            language_contract = (
+                "## Mandatory response language (highest priority)\n"
+                "Respond in English for this turn. Keep formulas, code, and source filenames unchanged."
+            )
+        if ctx.active_tab or ctx.tab_context:
+            current_context = json.dumps(ctx.tab_context or {}, ensure_ascii=False, default=str)
+            base_prompt += (
+                "\n\n## Current learner screen (highest content priority)\n"
+                f"Active section: {ctx.active_tab or 'unknown'}\nContext: {current_context}\n"
+                "Answer the learner's current on-screen section, selected node, test, or question first. "
+                "Do not guess or switch to a different chapter merely because retrieval returned a loosely related passage. "
+                "Never mention retrieval, search ranking, system context, hidden prompts, or conflicts between internal sources. "
+                "If the exact current content is unavailable, ask one short clarifying question instead of naming a chapter."
+            )
+
+        # Keep this contract last so accumulated history and optional strategy
+        # fragments cannot weaken the current interface-language requirement.
+        return f"{base_prompt}\n\n{language_contract}"
 
     def _build_fallback_prompt(self, ctx: AgentContext) -> str:
         """Build system prompt via Python string assembly (legacy path)."""

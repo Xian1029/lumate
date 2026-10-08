@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import {
   getChatSessionMessages,
+  deleteChatSession,
   listChatSessions,
   type PlanProgressEvent,
   streamChat,
@@ -17,6 +18,7 @@ import { detectGeneratedQuizDraft, type GeneratedQuizDraft } from "@/lib/quiz-de
 import { useWorkspaceStore } from "@/store/workspace";
 import { applyBlockDecisions, categorizeError } from "./chat-stream";
 import { getDismissHistory } from "./workspace-blocks";
+import { getLocale } from "@/lib/i18n";
 
 /** TTL for cached chat session lists (per course). */
 const SESSIONS_TTL_MS = 30_000; // 30 seconds
@@ -92,6 +94,7 @@ interface ChatState {
   loadSessions: (courseId: string, options?: { restoreLatest?: boolean }) => Promise<void>;
   loadSessionMessages: (courseId: string, sessionId: string) => Promise<void>;
   startNewSession: (courseId: string) => void;
+  deleteSession: (courseId: string, sessionId: string) => Promise<void>;
 
   sendMessage: (courseId: string, content: string, options?: SendMessageOptions) => Promise<void>;
   clearMessages: (courseId?: string) => void;
@@ -358,6 +361,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
+  deleteSession: async (courseId, sessionId) => {
+    await deleteChatSession(sessionId);
+    ttlCache.invalidate(`chat:sessions:${courseId}`);
+    const remaining = (get().sessionsByCourse[courseId] ?? []).filter((item) => item.id !== sessionId);
+    set((s) => ({ sessionsByCourse: { ...s.sessionsByCourse, [courseId]: remaining } }));
+    if (get().sessionIds[courseId] !== sessionId) return;
+    get().startNewSession(courseId);
+    if (remaining[0]) await get().loadSessionMessages(courseId, remaining[0].id);
+  },
+
   sendMessage: async (courseId, content, options?) => {
     if (get().activeCourseId !== courseId) {
       get().setCourseContext(courseId);
@@ -465,6 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         learningMode: wsState.spaceLayout?.mode,
         blockTypes: wsState.spaceLayout?.blocks?.map((b) => b.type),
         dismissedBlockTypes: getDismissHistory(courseId),
+        locale: getLocale(),
       })) {
         if (event.type === "content") {
           assistantContent += event.content;

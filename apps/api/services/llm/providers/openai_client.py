@@ -31,7 +31,15 @@ class OpenAIClient(LLMClient):
     # Local backends that may not support stream_options
     _NO_STREAM_OPTIONS = {"ollama", "vllm", "lmstudio", "textgenwebui", "custom"}
 
-    def __init__(self, api_key: str, model: str, base_url: str | None = None, name: str = "openai"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        name: str = "openai",
+        *,
+        trust_env: bool = False,
+    ):
         super().__init__()
         from openai import AsyncOpenAI
 
@@ -42,6 +50,10 @@ class OpenAIClient(LLMClient):
             kwargs["base_url"] = base_url
         # Timeout: 10s connect, 120s read (streaming), 30s write, 10s pool
         kwargs["timeout"] = httpx.Timeout(connect=10, read=120, write=30, pool=10)
+        # Desktop proxy variables may be injected by unrelated software and
+        # break TLS even when direct provider access works. Direct is the safe
+        # local default; proxy-dependent deployments can explicitly opt in.
+        kwargs["http_client"] = httpx.AsyncClient(trust_env=trust_env)
         self.client = AsyncOpenAI(**kwargs)
         self.model = model
 

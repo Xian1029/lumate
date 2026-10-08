@@ -71,7 +71,11 @@ export function TabbedSection<T extends string>({
         </div>
       </div>
 
-      <div role="tabpanel" aria-label={`${resolvedActiveTab} panel`}>
+      <div
+        role="tabpanel"
+        aria-label={`${resolvedActiveTab} panel`}
+        className="flex-1 min-h-0 overflow-hidden [&>*]:h-full"
+      >
         <Suspense fallback={<SubViewSkeleton />}>
           {children(resolvedActiveTab)}
         </Suspense>

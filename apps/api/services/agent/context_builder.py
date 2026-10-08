@@ -159,6 +159,22 @@ async def load_context(
             await db.rollback()
             logger.exception("RAG search failed: %s", exc)
 
+    # A concrete on-screen lesson is more authoritative than broad semantic
+    # search results. Bind the turn to it so a generic prompt such as
+    # "explain this lesson" cannot drift into another chapter.
+    screen_content = str(ctx.tab_context.get("selected_node_content") or "").strip()
+    if screen_content:
+        screen_title = str(ctx.tab_context.get("selected_node_title") or "当前学习内容").strip()
+        ctx.content_docs = [{
+            "title": screen_title,
+            "content": screen_content,
+            "source_type": "current_screen",
+            "source_file": screen_title,
+            "matched_facets": [screen_title],
+            "matched_terms": [],
+        }]
+        ctx.metadata["content_scope"] = "current_screen"
+
     # Apply context window budget trimming
     ctx = await _trim_context(ctx, db)
 

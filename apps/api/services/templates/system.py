@@ -39,7 +39,7 @@ BUILTIN_TEMPLATES = [
             "visual_preference": "diagram_heavy",
             "quiz_difficulty": "adaptive",
             "layout_preset": "balanced",
-            "language": "en",
+            "language": "zh",
         },
     },
     {
@@ -65,7 +65,7 @@ BUILTIN_TEMPLATES = [
             "visual_preference": "text_heavy",
             "quiz_difficulty": "medium",
             "layout_preset": "notesFocused",
-            "language": "en",
+            "language": "zh",
         },
     },
     {
@@ -91,7 +91,7 @@ BUILTIN_TEMPLATES = [
             "visual_preference": "auto",
             "quiz_difficulty": "easy",
             "layout_preset": "chatFocused",
-            "language": "auto",
+            "language": "zh",
         },
     },
     {
@@ -117,7 +117,7 @@ BUILTIN_TEMPLATES = [
             "visual_preference": "maximum",
             "quiz_difficulty": "adaptive",
             "layout_preset": "balanced",
-            "language": "en",
+            "language": "zh",
         },
     },
     {
@@ -143,7 +143,7 @@ BUILTIN_TEMPLATES = [
             "visual_preference": "minimal",
             "quiz_difficulty": "hard",
             "layout_preset": "quizFocused",
-            "language": "en",
+            "language": "zh",
         },
     },
 ]
@@ -159,7 +159,12 @@ async def seed_builtin_templates(db: AsyncSession) -> int:
                 LearningTemplate.is_builtin == True,
             )
         )
-        if result.scalar_one_or_none():
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.description = template_data["description"]
+            existing.target_audience = template_data["target_audience"]
+            existing.tags = template_data["tags"]
+            existing.preferences = template_data["preferences"]
             continue
 
         template = LearningTemplate(
@@ -196,9 +201,20 @@ async def apply_template(
     if not template:
         return {"error": "Template not found"}
 
-    scope = "course" if course_id else "template"
+    # Applying a template is an explicit user choice. Store it at global/course
+    # priority so an older global preference cannot silently mask every value.
+    scope = "course" if course_id else "global"
 
-    for dimension, value in template.preferences.items():
+    preferences = template.preferences
+    if template.is_builtin:
+        current_definition = next(
+            (item for item in BUILTIN_TEMPLATES if item["name"] == template.name),
+            None,
+        )
+        if current_definition:
+            preferences = current_definition["preferences"]
+
+    for dimension, value in preferences.items():
         await save_preference(
             db,
             user_id=user_id,
@@ -212,7 +228,9 @@ async def apply_template(
 
     return {
         "template": template.name,
-        "applied_preferences": len(template.preferences),
+        "template_id": str(template.id),
+        "applied_preferences": len(preferences),
+        "preferences": preferences,
         "scope": scope,
     }
 

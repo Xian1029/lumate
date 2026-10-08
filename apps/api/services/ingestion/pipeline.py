@@ -19,6 +19,7 @@ References:
 
 import hashlib
 import logging
+import re
 import uuid
 from collections.abc import Mapping
 
@@ -28,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ingestion import IngestionJob
 from libs.exceptions import IngestionError, reraise_as_app_error  # noqa: F401
+from config import settings
+from services.upload_storage import upload_record_path
 
 # ── Backward-compatible re-exports ──
 # All public names that external code imports from this module.
@@ -61,6 +64,11 @@ from services.ingestion.auto_generation import (  # noqa: F401, E402
 
 logger = logging.getLogger(__name__)
 
+# Bump when persisted course-tree semantics change. Including this version in
+# the dedup digest lets an already-uploaded PDF be rebuilt once with the new
+# chapter/section parser instead of returning its legacy page-shaped tree.
+_INGESTION_SCHEMA_VERSION = b"textbook-sections-v2\0"
+
 _PHASE_LABELS = {
     "uploaded": "Upload received",
     "extracting": "Extracting content",
@@ -70,6 +78,29 @@ _PHASE_LABELS = {
     "completed": "Ready",
     "failed": "Failed",
 }
+
+_WORKFLOW_STATE_BY_PHASE = {
+    "uploaded": "UPLOADED",
+    "extracting": "PARSING",
+    "classifying": "CLASSIFYING",
+    "dispatching": "PARSING",
+    "embedding": "READY",
+    "completed": "READY",
+    "failed": "FAILED_RETRYABLE",
+}
+
+
+def _failure_code(message: str | None) -> str:
+    text = (message or "").lower()
+    if "outline" in text or "section" in text:
+        return "STRUCTURE_DETECTION_FAILED"
+    if "extract" in text or "content" in text or "page" in text:
+        return "TEXT_EXTRACTION_FAILED"
+    if "classif" in text:
+        return "CLASSIFICATION_FAILED"
+    if "file" in text or "pdf" in text or "document" in text:
+        return "FILE_READ_FAILED"
+    return "PROCESSING_FAILED"
 
 
 def _prefer_extracted_title(job: IngestionJob, title: str | None) -> None:
@@ -90,6 +121,7 @@ def _set_job_phase(
     embedding_status: str | None = None,
     nodes_created: int | None = None,
     error_message: str | None = None,
+    workflow_state: str | None = None,
 ) -> None:
     job.status = status
     job.progress_percent = max(0, min(progress_percent, 100))
@@ -99,6 +131,8 @@ def _set_job_phase(
     if nodes_created is not None:
         job.nodes_created = nodes_created
     job.error_message = error_message
+    job.workflow_state = workflow_state or _WORKFLOW_STATE_BY_PHASE.get(status, "PARSING")
+    job.failure_code = _failure_code(error_message) if status == "failed" else None
 
 
 def _count_created_nodes(dispatch_result: Mapping[str, object] | None) -> int:
@@ -120,6 +154,69 @@ def _snapshot_job_int(job: IngestionJob, field: str, default: int = 0) -> int:
         return int(raw_value)
     except (TypeError, ValueError):
         return default
+
+
+async def _settle_failure_workflow(db: AsyncSession, job: IngestionJob) -> None:
+    """Promote repeat failures to a final state without losing audit history."""
+    scalar = getattr(db, "scalar", None)
+    if scalar is None:
+        # Lightweight test/repair-session adapters may not expose SQLAlchemy's
+        # scalar helper. They can still record the retryable failure safely;
+        # final-state promotion will happen on the next normal request.
+        return
+    attempts = await scalar(
+        select(sa.func.count(IngestionJob.id)).where(
+            IngestionJob.user_id == job.user_id,
+            IngestionJob.course_id == job.course_id,
+            IngestionJob.original_filename == job.original_filename,
+            IngestionJob.status == "failed",
+        )
+    )
+    if int(attempts or 0) >= settings.ingestion_max_retry_attempts:
+        job.workflow_state = "FAILED_FINAL"
+
+
+async def _cleanup_unpublished_terminal_failure(db: AsyncSession, job: IngestionJob) -> None:
+    """Remove uploads only when an entire provisional space has failed.
+
+    A failed file inside a partly-ready or ACTIVE learning space is retained
+    for recovery.  In contrast, once every current source in a SETUP space is
+    terminally failed, there can be no learner-visible workspace and retaining
+    the upload, extracted text, and job rows is just orphaned processing data.
+    """
+    if job.workflow_state != "FAILED_FINAL" or not job.course_id:
+        return
+    from models.course import Course
+    from services.upload_storage import resolve_upload_path
+
+    course = await db.scalar(select(Course).where(Course.id == job.course_id, Course.status == "SETUP"))
+    if course is None:
+        return
+    current_jobs = list((await db.execute(select(IngestionJob).where(
+        IngestionJob.course_id == job.course_id,
+        IngestionJob.is_current_attempt.is_(True),
+    ))).scalars().all())
+    if not current_jobs or any(item.workflow_state != "FAILED_FINAL" for item in current_jobs):
+        return
+
+    paths = {item.file_path for item in current_jobs if item.file_path}
+    for item in current_jobs:
+        await db.delete(item)
+    await db.delete(course)
+    await db.commit()
+
+    # A content hash/path can be shared by another course.  Only unlink a
+    # managed file after confirming no surviving ingestion record references it.
+    for path in paths:
+        referenced = await db.scalar(select(IngestionJob.id).where(IngestionJob.file_path == path).limit(1))
+        if referenced:
+            continue
+        resolved = resolve_upload_path(path, settings.upload_dir)
+        if resolved is not None:
+            try:
+                resolved.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Failed to remove terminal failed upload: %s", resolved)
 
 
 # ── Step 5 & 6: Full pipeline ──
@@ -151,9 +248,12 @@ async def run_ingestion_pipeline(
         try:
             import xxhash
 
-            content_hash = xxhash.xxh64(file_bytes).hexdigest()
+            digest = xxhash.xxh64()
+            digest.update(_INGESTION_SCHEMA_VERSION)
+            digest.update(file_bytes)
+            content_hash = digest.hexdigest()
         except ImportError:
-            content_hash = hashlib.sha256(file_bytes).hexdigest()
+            content_hash = hashlib.sha256(_INGESTION_SCHEMA_VERSION + file_bytes).hexdigest()
         # Check for duplicates
         duplicate_filters = [
             IngestionJob.content_hash == content_hash,
@@ -175,7 +275,7 @@ async def run_ingestion_pipeline(
         source_type="file" if file_path else "url",
         original_filename=filename,
         url=url,
-        file_path=file_path,
+        file_path=upload_record_path(file_path, settings.upload_dir) if file_path else None,
         content_hash=content_hash,
         course_id=course_id,
         course_preset=course_id is not None,
@@ -183,6 +283,7 @@ async def run_ingestion_pipeline(
         progress_percent=5,
         phase_label=_PHASE_LABELS["uploaded"],
         embedding_status="pending",
+        workflow_state="UPLOADED",
     )
     db.add(job)
     await db.flush()
@@ -332,8 +433,42 @@ async def run_ingestion_pipeline(
                 embedding_status="failed",
                 error_message="No content could be extracted",
             )
+            await _settle_failure_workflow(db, job)
             await db.commit()
             return job
+
+        # Partial extraction: some PDF pages were unreadable. Record page-level
+        # statistics, strip the marker, and continue with the readable pages.
+        # Only fail entirely when NOTHING could be read (handled above).
+        unreadable_match = re.search(r"\[\[OPENTUTOR_UNREADABLE_PAGES:([^\]]+)\]\]", extracted)
+        if unreadable_match:
+            payload = unreadable_match.group(1)
+            failed_csv, _, total_part = payload.partition("|")
+            failed_pages: list[int] = []
+            for token in failed_csv.split(","):
+                token = token.strip()
+                if token.isdigit():
+                    failed_pages.append(int(token))
+            total: int | None = None
+            if total_part.startswith("total=") and total_part[6:].isdigit():
+                total = int(total_part[6:])
+            if total is None:
+                total = failed_pages[-1] if failed_pages else len(failed_pages)
+            parsed = max(total - len(failed_pages), 0)
+            job.page_stats = {
+                "total": total,
+                "parsed": parsed,
+                "failed_pages": failed_pages,
+                "unit": "pages",
+            }
+            # Strip the marker from the extracted text before downstream steps.
+            extracted = extracted.replace(unreadable_match.group(0), "")
+            job.extracted_markdown = extracted
+            logger.warning(
+                "Partial extraction for %s: %d/%d pages parsed, failed pages: %s",
+                filename, parsed, total, failed_pages[:20],
+            )
+            await db.commit()
 
         # Step 3: 3-tier classification
         _set_job_phase(job, status="classifying", progress_percent=45)
@@ -342,6 +477,38 @@ async def run_ingestion_pipeline(
             extracted,
             filename,
         )
+        job.workflow_state = "CLASSIFIED"
+        await db.commit()
+
+        if job.content_category == "textbook" and (filename or "").lower().endswith(".pdf"):
+            from services.parser.pdf import _markdown_to_tree, assess_textbook_outline_integrity
+
+            _set_job_phase(job, status="classifying", progress_percent=55, workflow_state="DETECTING_STRUCTURE")
+            await db.commit()
+            preview_nodes = _markdown_to_tree(extracted, job.course_id or uuid.uuid4(), filename)
+            outline_complete, outline_report = assess_textbook_outline_integrity(
+                extracted, preview_nodes,
+            )
+            # Keep the established page-statistics contract untouched for
+            # ordinary PDFs.  Integrity metadata exists only when a formal
+            # source TOC was actually detected and compared.
+            if outline_report.get("checked"):
+                job.page_stats = {**(job.page_stats or {}), "outline_integrity": outline_report}
+            if not outline_complete:
+                _set_job_phase(
+                    job,
+                    status="failed",
+                    progress_percent=45,
+                    embedding_status="failed",
+                    error_message=(
+                        "Textbook outline coverage is incomplete; missing sections: "
+                        + ", ".join(outline_report.get("missing_sections", [])[:20])
+                    ),
+                )
+                await _settle_failure_workflow(db, job)
+                await db.commit()
+                await _cleanup_unpublished_terminal_failure(db, job)
+                return job
 
         # Step 4: Course matching (if not preset)
         if not course_id:
@@ -360,10 +527,13 @@ async def run_ingestion_pipeline(
         nodes_created = _count_created_nodes(dispatch_result)
         needs_embedding = bool((dispatch_result or {}).get("content_tree"))
         if needs_embedding:
+            # The learner can use the material as soon as dispatch succeeds.
+            # Vector indexing is an optional background enhancement and must
+            # never leave a textbook visually "processing" forever.
             _set_job_phase(
                 job,
-                status="embedding",
-                progress_percent=90,
+                status="completed",
+                progress_percent=100,
                 embedding_status="pending",
                 nodes_created=nodes_created,
             )
@@ -394,10 +564,12 @@ async def run_ingestion_pipeline(
             nodes_created=last_nodes,
             error_message=str(e)[:500],
         )
+        await _settle_failure_workflow(db, job)
         logger.exception("Ingestion pipeline failed")
         try:
             db.add(job)
             await db.commit()
+            await _cleanup_unpublished_terminal_failure(db, job)
         except (sa.exc.SQLAlchemyError, OSError):
             logger.exception("Failed to persist ingestion failure")
 

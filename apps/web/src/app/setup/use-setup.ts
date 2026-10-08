@@ -253,7 +253,10 @@ export function useSetup() {
           seenJobStatesRef.current[job.id] = stateKey;
           const label = job.filename || tRef.current("new.untitledSource");
           if (job.error_message) {
-            newLogs.push({ text: `${label}: ${job.error_message}`, color: "text-destructive" });
+            newLogs.push({
+              text: `${label}：暂时未能完整解析，进入学习空间后可以重新上传或更换文件。`,
+              color: "text-destructive",
+            });
           } else if (job.phase_label) {
             newLogs.push({ text: `${label}: ${job.phase_label}`, color: "text-muted-foreground" });
           }
@@ -329,22 +332,6 @@ export function useSetup() {
     setStep("interview");
   }, []);
 
-  // ── Interview complete — apply AI-recommended layout and proceed ──
-  const acceptInterviewLayout = useCallback((layout: SpaceLayoutResponse) => {
-    setInterviewLayout(layout);
-    if (layout.mode) {
-      setSelectedMode(layout.mode as LearningMode);
-    }
-    setSelectedTemplate(layout.templateId);
-    // Skip manual template selection, go directly to confirm+discovery
-    setStep("template");
-  }, []);
-
-  // ── Skip interview — go to manual template selection ──
-  const skipInterview = useCallback(() => {
-    setStep("template");
-  }, []);
-
   const beginDiscovery = useCallback(async (
     templateId: string | null,
     mode: LearningMode | null,
@@ -396,6 +383,26 @@ export function useSetup() {
         setIsSubmittingContent(false);
       });
   }, [addCourse, autoScrape, canvasSessionValid, files, projectName, t, url]);
+
+  // Accepting the interview recommendation must use the personalized layout
+  // directly. Fixed templates are reserved for the explicit skip path.
+  const acceptInterviewLayout = useCallback(async (layout: SpaceLayoutResponse) => {
+    setInterviewLayout(layout);
+    setSelectedMode(layout.mode as LearningMode);
+    setSelectedTemplate(layout.templateId);
+    try {
+      await beginDiscovery(layout.templateId, layout.mode as LearningMode, layout);
+    } catch (err) {
+      setNameError((err as Error).message);
+    }
+  }, [beginDiscovery]);
+
+  const skipInterview = useCallback(() => {
+    setInterviewLayout(null);
+    setSelectedTemplate(null);
+    setSelectedMode(null);
+    setStep("template");
+  }, []);
 
   // ── Confirm template: create course and continue with discovery before workspace ──
   const confirmTemplate = useCallback(async () => {

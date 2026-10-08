@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCourseStore } from "@/store/course";
 import {
   getHealthStatus,
-  getCourseProgress,
   getKnowledgeGraph,
   getReviewSession,
   listAgentTasks,
@@ -13,6 +12,7 @@ import {
   rejectAgentTask,
   logAgentDecision,
   markTaskNotificationsRead,
+  markNotificationRead,
   listNotifications,
   getLearningOverview,
   getWeeklyReport,
@@ -33,6 +33,7 @@ import {
   isModeRecommendationSnoozed,
   snoozeModeRecommendation,
   notificationMatchesTask,
+  selectHomeAgentInsights,
   normalizeConceptLabel,
   type ReviewSummary,
   type PendingTaskSummary,
@@ -48,7 +49,7 @@ export function useDashboardData() {
   const router = useRouter();
   const t = useT();
   const tf = useTF();
-  const { courses, loading, error } = useCourseStore();
+  const { courses, loading, error, removeCourse } = useCourseStore();
 
   const [health, setHealth] = useState<HealthStatus | null>(
     () => ttlCache.get<HealthStatus>("dash:health") ?? null,
@@ -79,8 +80,14 @@ export function useDashboardData() {
     // If courses exist, mark onboarded and skip setup
     if (courses.length > 0) {
       try { window.localStorage.setItem("opentutor_onboarded", "true"); } catch { /* quota */ }
+      // 仅每个会话首次自动进入唯一课程；否则用户点"返回"回首页时会被立即弹回课程页
       if (courses.length === 1) {
-        router.replace(`/course/${courses[0].id}`);
+        let alreadyAutoEntered = false;
+        try { alreadyAutoEntered = window.sessionStorage.getItem("opentutor_auto_entered") === "1"; } catch { /* quota */ }
+        if (!alreadyAutoEntered) {
+          try { window.sessionStorage.setItem("opentutor_auto_entered", "1"); } catch { /* quota */ }
+          router.replace(`/course/${courses[0].id}`);
+        }
       }
       return;
     }
@@ -139,12 +146,20 @@ export function useDashboardData() {
     listNotifications({ unreadOnly: false, limit: 20 })
       .then((res) => {
         const all = res?.notifications ?? [];
-        setNotifications(all.filter((n) => !n.read).slice(0, 5));
+        setNotifications(selectHomeAgentInsights(all));
         const digest = all.find((n) => n.category === "daily_brief");
         if (digest) setDailyDigest(digest);
       })
       .catch((e) => console.error("[Dashboard] notifications fetch failed:", e));
   }, []);
+
+  const openAgentInsight = (notification: AppNotification, path: string | null) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== notification.id));
+    void markNotificationRead(notification.id).catch((e) => {
+      console.warn("[Dashboard] failed to mark insight as read:", e);
+    });
+    if (path) router.push(path);
+  };
 
   // Fetch pending approval tasks
   useEffect(() => {
@@ -228,14 +243,9 @@ export function useDashboardData() {
 
           const currentMode = getCourseMode(course);
           if (!currentMode) return;
-          const progress =
-            currentMode === "course_following" || currentMode === "self_paced"
-              ? await getCourseProgress(course.id).catch(() => null)
-              : null;
           const suggestion = evaluateModeSuggestion({
             currentMode,
             deadlines,
-            progress,
             t,
             tf,
           });
@@ -252,7 +262,8 @@ export function useDashboardData() {
       if (cancelled) return;
       deadlineItems.sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime());
       setUpcomingDeadlines(deadlineItems.slice(0, 10));
-      setModeRecommendations(next.slice(0, 6));
+      next.sort((a, b) => (a.recommendationKey === "deadline" ? -1 : 1) - (b.recommendationKey === "deadline" ? -1 : 1));
+      setModeRecommendations(next.slice(0, 3));
     };
     void fetchGoalDrivenDashboardData();
     return () => { cancelled = true; };
@@ -309,12 +320,20 @@ export function useDashboardData() {
     );
   };
 
+  const deleteSpace = async (courseId: string) => {
+    await removeCourse(courseId);
+    setReviewSummaries((prev) => prev.filter((item) => item.courseId !== courseId));
+    setPendingTasks((prev) => prev.filter((item) => item.course_id !== courseId));
+    setModeRecommendations((prev) => prev.filter((item) => item.courseId !== courseId));
+    setUpcomingDeadlines((prev) => prev.filter((item) => item.course_id !== courseId));
+  };
+
   return {
     router, t, tf, courses, loading, error, health,
     reviewSummaries, notifications, pendingTasks, actingTasks,
     modeRecommendations, actingModeCourses, upcomingDeadlines,
     dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
     totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
-    actOnTask, applyModeRecommendation, dismissModeRecommendation,
+    actOnTask, applyModeRecommendation, dismissModeRecommendation, deleteSpace, openAgentInsight,
   };
 }

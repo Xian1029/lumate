@@ -85,7 +85,7 @@ export function RuntimeAlert({ health, className }: RuntimeAlertProps) {
                   type="button"
                   onClick={() => setDismissed((prev) => new Set(prev).add(key))}
                   className="mt-0.5 shrink-0 text-amber-600 hover:text-amber-900 transition-colors"
-                  aria-label="Dismiss"
+                  aria-label={t("ui.dismiss")}
                 >
                   <X className="size-4" />
                 </button>

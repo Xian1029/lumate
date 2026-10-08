@@ -51,9 +51,10 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    # Guard: SQLite mode uses create_all(), not Alembic migrations
+    # Local development normally uses create_all(). Set ALEMBIC_FORCE_SQLITE=1
+    # to validate a formal migration against a SQLite copy before release.
     db_url = config.get_main_option("sqlalchemy.url", "")
-    if db_url.startswith("sqlite"):
+    if db_url.startswith("sqlite") and os.environ.get("ALEMBIC_FORCE_SQLITE") != "1":
         print("SQLite mode detected — migrations skipped (tables created via create_all() at startup).")
         return
     asyncio.run(run_async_migrations())

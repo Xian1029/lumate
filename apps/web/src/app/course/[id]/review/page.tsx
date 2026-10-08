@@ -1,22 +1,55 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, BookOpen, Brain, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Link2, LoaderCircle, Target } from "lucide-react";
 import {
+  getAiNoteForNode,
   getReviewSession,
   submitReviewRating,
+  type AiNoteForNode,
   type ReviewItem,
   type ReviewSession,
 } from "@/lib/api";
 import { trackApiFailure } from "@/lib/error-telemetry";
 import { useT, useTF } from "@/lib/i18n-context";
+import { useWorkspaceStore } from "@/store/workspace";
+import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
+import { markReviewSessionCompleted } from "@/lib/review-session-state";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Rating = "again" | "hard" | "good" | "easy";
+
+const REASON_KEYS: Record<string, string> = {
+  "low mastery": "review.reason.lowMastery",
+  "not yet practiced": "review.reason.notPracticed",
+  "memory decaying": "review.reason.memoryDecaying",
+  "high semantic interference": "review.reason.interference",
+  "FSRS overdue": "review.reason.overdue",
+  "scheduled review": "review.reason.scheduled",
+};
+
+function reviewReason(reason: string | undefined, t: (key: string) => string) {
+  if (!reason) return t("review.reason.scheduled");
+  const matched = Object.entries(REASON_KEYS)
+    .filter(([token]) => reason.includes(token))
+    .map(([, key]) => t(key));
+  if (reason.includes("prerequisite")) matched.push(t("review.reason.prerequisite"));
+  return [...new Set(matched)].join("、") || t("review.reason.scheduled");
+}
 
 export default function ReviewPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useT();
   const tf = useTF();
   const courseId = params.id as string;
@@ -35,20 +68,14 @@ export default function ReviewPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState<string | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [relatedNote, setRelatedNote] = useState<AiNoteForNode | null>(null);
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   const session = sessionByCourse[courseId] ?? null;
   const error = errorByCourse[courseId] ?? null;
   const loading = !session && !error;
-
-  // Persist ratings to sessionStorage for resume on page close/refresh
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(
-        `review-ratings-${courseId}`,
-        JSON.stringify(Array.from(ratings.entries())),
-      );
-    } catch { /* quota exceeded — non-critical */ }
-  }, [ratings, courseId]);
 
   useEffect(() => {
     if (sessionByCourse[courseId] || errorByCourse[courseId]) return;
@@ -84,6 +111,58 @@ export default function ReviewPage() {
   const total = items.length;
   const reviewed = ratings.size;
   const allDone = reviewed === total && total > 0;
+  const urgentCount = items.filter((item) => item.urgency === "overdue" || item.urgency === "urgent").length;
+
+  // Save only an unfinished session. Previously the completion screen removed
+  // this value during render and this effect immediately wrote it back.
+  useEffect(() => {
+    try {
+      const key = `review-ratings-${courseId}`;
+      if (allDone) {
+        sessionStorage.removeItem(key);
+        return;
+      }
+      sessionStorage.setItem(key, JSON.stringify(Array.from(ratings.entries())));
+    } catch { /* quota exceeded — non-critical */ }
+  }, [allDone, courseId, ratings]);
+
+  useEffect(() => {
+    if (!allDone) return;
+    markReviewSessionCompleted(courseId);
+
+    const originInsightId = searchParams.get("originInsight");
+    if (!originInsightId) return;
+    const store = useWorkspaceStore.getState();
+    const origin = store.spaceLayout.blocks.find((block) => block.id === originInsightId);
+    if (origin?.type !== "agent_insight" || origin.config.insightType !== "review_needed") return;
+
+    store.removeBlock(originInsightId);
+    void syncCourseSpaceLayout(courseId, useWorkspaceStore.getState().spaceLayout)
+      .catch((error) => console.warn("[Review] failed to persist resolved insight:", error));
+  }, [allDone, courseId, searchParams]);
+
+  useEffect(() => {
+    setNoteOpen(false);
+    setRelatedNote(null);
+    setNoteError(null);
+  }, [current?.concept_id]);
+
+  const openRelatedNote = useCallback(async () => {
+    if (!current?.content_node_id) return;
+    setNoteOpen(true);
+    setNoteLoading(true);
+    setNoteError(null);
+    try {
+      const note = await getAiNoteForNode(courseId, current.content_node_id);
+      setRelatedNote(note);
+      if (!note?.markdown?.trim()) setNoteError(t("review.relatedNoteEmpty"));
+    } catch {
+      setRelatedNote(null);
+      setNoteError(t("review.relatedNoteFailed"));
+    } finally {
+      setNoteLoading(false);
+    }
+  }, [courseId, current, t]);
 
   const handleRate = useCallback(
     async (rating: Rating) => {
@@ -156,8 +235,6 @@ export default function ReviewPage() {
   }
 
   if (allDone) {
-    // Clear saved progress — session complete
-    try { sessionStorage.removeItem(`review-ratings-${courseId}`); } catch { /* */ }
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
         <CheckCircle2 className="size-16 text-success" />
@@ -184,6 +261,16 @@ export default function ReviewPage() {
           <ArrowLeft className="size-5" />
         </button>
         <h1 className="text-sm font-semibold text-foreground">{t("review.sessionTitle")}</h1>
+        <button
+          type="button"
+          onClick={() => void openRelatedNote()}
+          disabled={!current?.content_node_id}
+          aria-label={t("review.viewRelatedNote")}
+          title={current?.content_node_id ? t("review.viewRelatedNote") : t("review.noRelatedNote")}
+          className="flex size-8 items-center justify-center rounded-xl border border-brand/20 bg-brand/8 text-brand transition-colors hover:bg-brand/15 disabled:cursor-not-allowed disabled:opacity-35"
+        >
+          <BookOpen className="size-4" />
+        </button>
         <div className="flex-1" />
         <span className="text-xs text-muted-foreground">
           {tf("review.reviewed", { reviewed, total })}
@@ -199,9 +286,27 @@ export default function ReviewPage() {
       </div>
 
       {/* Card area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-6">
+      <main className="flex-1 px-4 py-6 sm:p-8">
         {current && (
-          <div className="w-full max-w-lg space-y-6">
+          <div className="mx-auto w-full max-w-3xl space-y-5">
+            <section className="grid grid-cols-3 gap-2 sm:gap-3" aria-label={t("review.sessionOverview")}>
+              <div className="rounded-2xl border border-border/60 bg-card p-3 sm:p-4">
+                <Target className="mb-2 size-4 text-brand" />
+                <p className="text-lg font-semibold">{total}</p>
+                <p className="text-[11px] text-muted-foreground sm:text-xs">{t("review.todayConcepts")}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-card p-3 sm:p-4">
+                <Clock3 className="mb-2 size-4 text-warning-foreground" />
+                <p className="text-lg font-semibold">{urgentCount}</p>
+                <p className="text-[11px] text-muted-foreground sm:text-xs">{t("review.priorityConcepts")}</p>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-card p-3 sm:p-4">
+                <Brain className="mb-2 size-4 text-success" />
+                <p className="text-lg font-semibold">{Math.round((current.mastery ?? 0) * 100)}%</p>
+                <p className="text-[11px] text-muted-foreground sm:text-xs">{t("review.currentMastery")}</p>
+              </div>
+            </section>
+
             {/* Navigation */}
             <div className="flex items-center justify-between">
               <button
@@ -232,40 +337,65 @@ export default function ReviewPage() {
             </div>
 
             {/* Card */}
-            <div className="rounded-2xl bg-card card-shadow p-8 text-center space-y-4 min-h-[240px] flex flex-col items-center justify-center">
-              <h2 className="text-xl font-semibold text-foreground">
-                {current.concept_label}
-              </h2>
-
-              <div className="flex items-center gap-2 flex-wrap justify-center">
-                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${urgencyColor(current.urgency)}`}>
-                  {current.urgency}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {tf("review.mastery", { value: Math.round((current.mastery ?? 0) * 100) })}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {tf("review.stability", { value: (current.stability_days ?? 0).toFixed(1) })}
-                </span>
+            <div className="rounded-3xl bg-card card-shadow overflow-hidden">
+              <div className="border-b border-border/60 bg-gradient-to-br from-brand/10 via-card to-success/5 p-6 sm:p-8">
+                <p className="mb-2 text-xs font-medium text-brand">{t("review.recallChallenge")}</p>
+                <h2 className="text-xl font-semibold text-foreground sm:text-2xl">{current.concept_label}</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  {tf("review.recallPrompt", { concept: current.concept_label })}
+                </p>
               </div>
 
-              {!revealed ? (
-                <button
-                  type="button"
-                  onClick={() => setRevealed(true)}
-                  className="mt-4 px-5 py-2 rounded-full bg-brand text-brand-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-                >
-                  {t("review.showDetails")}
-                </button>
-              ) : (
-                <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  <p>{tf("review.retrievability", { value: Math.round(current.retrievability * 100) })}</p>
-                  {current.cluster && <p>{tf("review.cluster", { value: current.cluster })}</p>}
-                  {current.last_reviewed && (
-                    <p>{tf("review.lastReviewed", { value: new Date(current.last_reviewed).toLocaleDateString() })}</p>
-                  )}
+              <div className="space-y-5 p-6 sm:p-8">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${urgencyColor(current.urgency)}`}>
+                    {t(`review.urgency.${current.urgency === "scheduled" ? "ok" : current.urgency}`)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {tf("review.mastery", { value: Math.round((current.mastery ?? 0) * 100) })}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {tf("review.stability", { value: (current.stability_days ?? 0).toFixed(1) })}
+                  </span>
                 </div>
-              )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Target className="size-4 text-brand" />{t("review.whyReview")}</div>
+                    <p className="text-sm leading-6 text-muted-foreground">{reviewReason(current.reason, t)}</p>
+                  </div>
+                  <div className="rounded-2xl bg-muted/35 p-4">
+                    <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Link2 className="size-4 text-success" />{t("review.relatedKnowledge")}</div>
+                    {current.related_concepts?.length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {current.related_concepts.map((concept) => <span key={concept} className="rounded-full bg-card px-2.5 py-1 text-xs">{concept}</span>)}
+                      </div>
+                    ) : <p className="text-sm text-muted-foreground">{t("review.buildConnection")}</p>}
+                  </div>
+                </div>
+
+                {!revealed ? (
+                  <div className="rounded-2xl border border-dashed border-brand/30 p-4 text-center">
+                    <p className="mb-3 text-sm text-muted-foreground">{t("review.thinkFirst")}</p>
+                    <button type="button" onClick={() => setRevealed(true)} className="px-5 py-2 rounded-full bg-brand text-brand-foreground text-sm font-medium hover:opacity-90 transition-opacity">
+                      {t("review.showDetails")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-brand/15 bg-brand/5 p-4 text-sm">
+                    <div className="mb-3 flex items-center gap-2 font-medium"><BookOpen className="size-4 text-brand" />{t("review.reviewGuide")}</div>
+                    <ol className="list-decimal space-y-2 pl-5 leading-6 text-muted-foreground">
+                      <li>{tf("review.guideDefinition", { concept: current.concept_label })}</li>
+                      <li>{t("review.guideExample")}</li>
+                      <li>{t("review.guideCheck")}</li>
+                    </ol>
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-brand/10 pt-3 text-xs text-muted-foreground">
+                      <span>{tf("review.retrievability", { value: Math.round(current.retrievability * 100) })}</span>
+                      {current.content_node_id ? <button type="button" onClick={() => void openRelatedNote()} className="inline-flex items-center gap-1 font-medium text-brand hover:underline"><BookOpen className="size-3.5" />{t("review.openRelatedNotes")}</button> : null}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Rating buttons */}
@@ -305,6 +435,44 @@ export default function ReviewPage() {
           </div>
         )}
       </main>
+
+      <Dialog open={noteOpen} onOpenChange={setNoteOpen}>
+        <DialogContent className="!left-auto !right-0 !top-0 flex !h-dvh !max-h-dvh w-[min(92vw,680px)] !max-w-none !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden !rounded-none border-y-0 border-r-0 p-0 data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right">
+          <DialogHeader className="border-b border-border/60 bg-gradient-to-r from-brand/10 to-success/5 px-6 py-5 pr-12">
+            <DialogTitle className="flex items-center gap-2">
+              <span className="flex size-9 items-center justify-center rounded-xl bg-brand/12 text-brand"><BookOpen className="size-5" /></span>
+              {relatedNote?.title || current?.concept_label || t("review.relatedNoteTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("review.relatedNoteDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-48 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
+            {noteLoading ? (
+              <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />{t("review.relatedNoteLoading")}
+              </div>
+            ) : noteError ? (
+              <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">
+                <BookOpen className="size-8 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">{noteError}</p>
+              </div>
+            ) : relatedNote?.markdown ? (
+              <MarkdownRenderer content={relatedNote.markdown} />
+            ) : null}
+          </div>
+          {current?.content_node_id ? (
+            <div className="border-t border-border/60 bg-background/95 px-6 py-4 backdrop-blur">
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">{t("review.continueLearningHint")}</p>
+              <Link
+                href={`/course/${courseId}?node=${encodeURIComponent(current.content_node_id)}#notes`}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-brand-foreground transition-opacity hover:opacity-90"
+              >
+                <BookOpen className="size-4" />
+                {t("review.goToChapterLearning")}
+              </Link>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

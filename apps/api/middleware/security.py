@@ -65,6 +65,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         for header, value in SECURITY_HEADERS.items():
             response.headers[header] = value
+        # Uploaded course files are shown inside the authenticated/local
+        # learning workspace. Allow only this endpoint to be framed by the
+        # same site; all other API responses retain the DENY policy.
+        if request.url.path.startswith("/api/content/files/"):
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; object-src 'self'; frame-ancestors 'self'"
+            )
         # HSTS only in production
         if not request.url.hostname or request.url.hostname != "localhost":
             response.headers["Strict-Transport-Security"] = f"max-age={HSTS_MAX_AGE}; includeSubDomains"
@@ -103,6 +111,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         llm_rpm: int = 10,
         cost_budget_per_minute: int = 500,
         cost_aware: bool = False,
+        exempt_local_reads: bool = False,
     ):
         super().__init__(app)
         # Simple mode
@@ -111,6 +120,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Cost-aware mode
         self.cost_budget = cost_budget_per_minute
         self.cost_aware = cost_aware
+        self.exempt_local_reads = exempt_local_reads
         self._buckets: dict[str, _RateBucket] = defaultdict(_RateBucket)
         self._last_cleanup: float = time.monotonic()
         self._max_buckets: int = 10000
@@ -201,6 +211,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Exempt paths
         if any(path.startswith(prefix) for prefix in self._EXEMPT_PREFIXES):
+            return await call_next(request)
+
+        # A single-user local workspace can legitimately fan out into many
+        # concurrent reads while mounting dashboard blocks. Reads are cheap
+        # and side-effect free, so do not let them consume the shared write or
+        # LLM budget. Authenticated/network deployments keep the normal cap.
+        if self.exempt_local_reads and request.method in {"GET", "HEAD", "OPTIONS"}:
             return await call_next(request)
 
         client_ip = self._get_client_ip(request)

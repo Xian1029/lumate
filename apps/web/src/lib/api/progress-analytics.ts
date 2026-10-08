@@ -1,4 +1,5 @@
 import { request } from "./client";
+import { getLocale } from "@/lib/i18n";
 
 import type { JsonObject, NullableDateTime, SavedGeneratedAsset } from "./client";
 import type { GeneratedAssetBatchSummary } from "./practice";
@@ -13,10 +14,12 @@ interface ExamPrepPlan {
   plan: string;
 }
 
+/** @deprecated Legacy Markdown preview only. New UI must use LearningPlan APIs. */
 export async function getExamPrepPlan(
   courseId: string,
   daysUntilExam: number = 7,
   examTopic?: string,
+  contentNodeId?: string,
 ): Promise<ExamPrepPlan> {
   return request("/workflows/exam-prep", {
     method: "POST",
@@ -24,15 +27,20 @@ export async function getExamPrepPlan(
       course_id: courseId,
       exam_topic: examTopic,
       days_until_exam: daysUntilExam,
+      language: getLocale(),
+      content_node_id: contentNodeId,
     }),
   });
 }
 
+/** @deprecated Compatibility-only API. It creates a reviewable LearningPlan; new UI must not call it. */
 export async function saveStudyPlan(
   courseId: string,
   markdown: string,
   title?: string,
   replaceBatchId?: string,
+  source: "assistant" | "manual" = "assistant",
+  contentNodeId?: string,
 ): Promise<SavedGeneratedAsset> {
   return request("/workflows/study-plans/save", {
     method: "POST",
@@ -41,10 +49,13 @@ export async function saveStudyPlan(
       markdown,
       title,
       replace_batch_id: replaceBatchId,
+      source,
+      content_node_id: contentNodeId,
     }),
   });
 }
 
+/** @deprecated Read-only GeneratedAsset history. */
 export async function listStudyPlanBatches(courseId: string): Promise<GeneratedAssetBatchSummary[]> {
   return request(`/workflows/study-plans/${courseId}`);
 }
@@ -59,6 +70,7 @@ export interface StudyPlanResponse {
   updated_at: string;
 }
 
+/** @deprecated Read-only StudyPlan history. */
 export async function getStudyPlans(courseId: string, limit = 5): Promise<StudyPlanResponse[]> {
   return request(`/workflows/courses/${courseId}/study-plans?limit=${limit}`);
 }
@@ -171,6 +183,21 @@ export interface NextActionResponse {
   queue_ready: boolean;
 }
 
+export interface NextLearningAction {
+  course_id: string | null;
+  course_name: string | null;
+  title: string;
+  reason: string;
+  recommended_action: string;
+  action_type: string;
+  href: string;
+  primary_label: string;
+  recent_course_id: string | null;
+  recent_course_name: string | null;
+  recent_content_title: string | null;
+  recent_at: string | null;
+}
+
 export async function listAgentTasks(courseId?: string): Promise<AgentTask[]> {
   const query = courseId ? `?course_id=${courseId}` : "";
   return request(`/tasks${query}`);
@@ -233,6 +260,11 @@ export async function listStudyGoals(courseId?: string, status?: string): Promis
 
 export async function getNextAction(courseId: string): Promise<NextActionResponse> {
   return request(`/goals/${courseId}/next-action`);
+}
+
+/** The server-owned, cross-course decision for the personal learning home. */
+export async function getNextLearningAction(): Promise<NextLearningAction> {
+  return request("/goals/next-learning-action");
 }
 
 export interface CreateGoalRequest {
@@ -339,7 +371,15 @@ export async function listTemplates(): Promise<LearningTemplate[]> {
   return request("/progress/templates");
 }
 
-export async function applyTemplate(templateId: string): Promise<void> {
+export interface TemplateApplyResult {
+  template: string;
+  template_id: string;
+  applied_preferences: number;
+  scope: string;
+  preferences: Record<string, string>;
+}
+
+export async function applyTemplate(templateId: string): Promise<TemplateApplyResult> {
   return request("/progress/templates/apply", {
     method: "POST",
     body: JSON.stringify({ template_id: templateId }),

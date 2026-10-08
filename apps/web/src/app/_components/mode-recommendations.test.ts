@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CourseProgress, StudyGoal } from "@/lib/api";
+import type { StudyGoal } from "@/lib/api";
 import {
   buildGoalDeadlineSnapshots,
   evaluateModeSuggestion,
@@ -27,22 +27,6 @@ function makeGoal(overrides: Partial<StudyGoal>): StudyGoal {
   };
 }
 
-function makeProgress(overrides: Partial<CourseProgress>): CourseProgress {
-  return {
-    course_id: "course-1",
-    total_nodes: 10,
-    mastered: 6,
-    reviewed: 4,
-    in_progress: 2,
-    not_started: 0,
-    total_study_minutes: 120,
-    average_mastery: 0.72,
-    completion_percent: 60,
-    gap_type_breakdown: {},
-    ...overrides,
-  };
-}
-
 const t = (key: string) => key;
 const tf = (key: string, values: Record<string, string | number>) =>
   `${key}:${JSON.stringify(values)}`;
@@ -60,7 +44,7 @@ describe("mode recommendations", () => {
     expect(deadlines[0].daysLeft).toBe(3);
   });
 
-  it("prefers error-rate recommendation over plain deadline", () => {
+  it("uses an upcoming deadline without treating in-progress nodes as errors", () => {
     const now = new Date("2026-03-30T00:00:00.000Z").getTime();
     const deadlines = buildGoalDeadlineSnapshots([
       makeGoal({ target_date: "2026-04-01T00:00:00.000Z" }),
@@ -68,21 +52,15 @@ describe("mode recommendations", () => {
     const suggestion = evaluateModeSuggestion({
       currentMode: "course_following",
       deadlines,
-      progress: makeProgress({
-        average_mastery: 0.5,
-        mastered: 2,
-        reviewed: 3,
-        in_progress: 6,
-      }),
       t,
       tf,
     });
 
-    expect(suggestion?.recommendationKey).toBe("error_rate");
+    expect(suggestion?.recommendationKey).toBe("deadline");
     expect(suggestion?.suggestedMode).toBe("exam_prep");
   });
 
-  it("suggests maintenance after all exam deadlines have passed", () => {
+  it("returns to self-paced after all exam deadlines have passed", () => {
     const now = new Date("2026-03-30T00:00:00.000Z").getTime();
     const deadlines = buildGoalDeadlineSnapshots([
       makeGoal({ target_date: "2026-03-20T00:00:00.000Z" }),
@@ -90,30 +68,22 @@ describe("mode recommendations", () => {
     const suggestion = evaluateModeSuggestion({
       currentMode: "exam_prep",
       deadlines,
-      progress: makeProgress({ average_mastery: 0.9 }),
       t,
       tf,
     });
 
     expect(suggestion?.recommendationKey).toBe("exam_passed");
-    expect(suggestion?.suggestedMode).toBe("maintenance");
+    expect(suggestion?.suggestedMode).toBe("self_paced");
   });
 
-  it("suggests maintenance for high mastery without near deadline", () => {
+  it("does not switch modes solely because mastery is high", () => {
     const suggestion = evaluateModeSuggestion({
       currentMode: "self_paced",
       deadlines: [],
-      progress: makeProgress({
-        average_mastery: 0.91,
-        mastered: 8,
-        reviewed: 4,
-        in_progress: 1,
-      }),
       t,
       tf,
     });
 
-    expect(suggestion?.recommendationKey).toBe("mastery");
-    expect(suggestion?.suggestedMode).toBe("maintenance");
+    expect(suggestion).toBeNull();
   });
 });

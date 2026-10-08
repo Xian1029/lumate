@@ -60,6 +60,21 @@ class IngestionJob(Base):
     nodes_created: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Creation-flow source of truth. ``status`` remains the low-level pipeline
+    # phase for compatibility; these fields describe the learner-visible state
+    # of this specific processing attempt.
+    processing_attempt_id: Mapped[uuid.UUID] = mapped_column(
+        CompatUUID, default=uuid.uuid4, nullable=False, index=True
+    )
+    workflow_state: Mapped[str] = mapped_column(String(50), default="UPLOADED", nullable=False, index=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    is_current_attempt: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    superseded_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(CompatUUID, nullable=True)
+
+    # Page-level extraction statistics (PDF: pages; Office: paragraphs/slides)
+    # {"total": 100, "parsed": 82, "failed_pages": [..], "unit": "pages"}
+    page_stats: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
+
     # Dispatch tracking
     dispatched: Mapped[bool] = mapped_column(Boolean, default=False)
     dispatched_to: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
@@ -84,6 +99,12 @@ class StudySession(Base):
     """Tracks study sessions for learning progress."""
 
     __tablename__ = "study_sessions"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "user_id", "course_id", "client_session_id",
+            name="uq_study_sessions_user_course_client",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(CompatUUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(CompatUUID, ForeignKey("users.id", ondelete="CASCADE"))
@@ -93,6 +114,18 @@ class StudySession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    active_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    elapsed_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    client_session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    content_node_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        CompatUUID, ForeignKey("course_content_tree.id", ondelete="SET NULL"), nullable=True
+    )
+    # The exact workspace surface (notes/practice/review/content) is part of
+    # the resume position, not presentation-only state.
+    target_module: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active")
+    activity_breakdown: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     # Activity tracking
     messages_sent: Mapped[int] = mapped_column(Integer, default=0)
@@ -104,6 +137,20 @@ class StudySession(Base):
     signals_extracted: Mapped[int] = mapped_column(Integer, default=0)
 
     metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
+
+
+class StudySessionHeartbeat(Base):
+    """Idempotency record for focused-study heartbeat batches."""
+
+    __tablename__ = "study_session_heartbeats"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        CompatUUID, ForeignKey("study_sessions.id", ondelete="CASCADE"), index=True
+    )
+    active_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    elapsed_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Assignment(Base):
@@ -163,6 +210,10 @@ class WrongAnswer(Base):
     # Structured classification: {category, confidence, evidence, related_concept}
 
     # Review tracking
+    # One durable review record represents one learner/problem pair. Repeated
+    # wrong submissions increase this count instead of creating duplicate
+    # cards in the learner's review flow.
+    wrong_attempt_count: Mapped[int] = mapped_column(Integer, default=1)
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     mastered: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -70,6 +70,7 @@ class DelegationMixin:
                 conversation_id=ctx.conversation_id,
                 session_id=uuid.uuid4(),
                 user_message=message,
+                response_language=ctx.response_language,
                 preferences=ctx.preferences.copy(),
                 preference_sources=ctx.preference_sources.copy(),
                 content_docs=list(ctx.content_docs),

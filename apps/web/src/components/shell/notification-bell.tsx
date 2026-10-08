@@ -131,13 +131,13 @@ export function NotificationBell() {
       </Button>
 
       {open && (
-        <div role="region" aria-label="Notifications" className="absolute right-0 top-full mt-1 z-50 w-80 rounded-2xl bg-popover card-shadow animate-fade-in">
+        <div role="region" aria-label={t("ui.notifications")} className="absolute right-0 top-full mt-1 z-50 w-80 rounded-2xl bg-popover card-shadow animate-fade-in">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border/60">
             <span className="text-xs font-medium">{t("notification.title")}</span>
             {unreadCount > 0 && (
               <button
                 type="button"
-                aria-label="Mark all notifications as read"
+                aria-label={t("ui.mark_all_notifications_as_read")}
                 className="text-[10px] text-primary hover:underline"
                 onClick={() => void handleMarkAllRead()}
               >

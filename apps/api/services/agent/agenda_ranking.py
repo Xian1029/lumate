@@ -101,7 +101,7 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         decision.action = "resume" if is_cancelled else "retry"
         decision.existing_task_id = uuid.UUID(winner.entity_id) if winner.entity_id else None
         decision.task_type = winner.detail.get("task_type")
-        decision.task_title = f"Recover: {winner.title}"
+        decision.task_title = f"继续未完成的学习：{winner.title}"
         decision.reason = "Most recent durable task did not finish; recovery is more valuable than starting new work."
 
     elif winner.signal_type == "active_goal":
@@ -111,8 +111,14 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
 
         if detail.get("has_next_action"):
             decision.task_type = "multi_step"
-            decision.task_title = f"Execute next step: {winner.title}"
+            decision.task_title = f"继续下一步：{winner.title}"
             decision.task_summary = detail.get("next_action", "")
+            # Carry the structured execution target so the learner-facing
+            # endpoint can deep-link instead of landing on the course home.
+            decision.input_json = {
+                "content_node_id": detail.get("content_node_id"),
+                "action_href": detail.get("action_href"),
+            }
             decision.plan_prompt = (
                 f"Goal: {winner.title}\n"
                 f"Objective: {detail.get('objective', '')}\n"
@@ -121,8 +127,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
             decision.reason = "Active goal has a concrete next action."
         elif (detail.get("days_until_target") or 999) <= 7:
             decision.task_type = "exam_prep"
-            decision.task_title = f"Exam prep: {winner.title}"
-            decision.task_summary = f"Break {winner.title} into a plan for the next 7 days."
+            decision.task_title = f"考前冲刺：{winner.title}"
+            decision.task_summary = f"把「{winner.title}」拆成接下来 7 天的复习安排。"
             decision.input_json = {
                 "course_id": str(winner.course_id) if winner.course_id else None,
                 "exam_topic": winner.title,
@@ -131,8 +137,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
             decision.reason = f"Goal due in {detail.get('days_until_target')} day(s)."
         else:
             decision.task_type = "multi_step"
-            decision.task_title = f"Plan next step: {winner.title}"
-            decision.task_summary = f"Turn {winner.title} into a concrete study task."
+            decision.task_title = f"规划下一步：{winner.title}"
+            decision.task_summary = f"把「{winner.title}」变成一项具体的学习任务。"
             decision.plan_prompt = (
                 f"Goal: {winner.title}\n"
                 f"Objective: {detail.get('objective', '')}\n"
@@ -143,8 +149,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     elif winner.signal_type == "deadline":
         decision.action = "submit"
         decision.task_type = "assignment_analysis"
-        decision.task_title = f"Analyze assignment: {winner.title}"
-        decision.task_summary = f"Assignment due in {winner.detail.get('days_until_due', '?')} day(s)."
+        decision.task_title = f"分析作业：{winner.title}"
+        decision.task_summary = f"作业还有 {winner.detail.get('days_until_due', '?')} 天截止。"
         decision.input_json = {"assignment_id": winner.entity_id}
         decision.reason = f"Assignment due in {winner.detail.get('days_until_due')} day(s)."
 
@@ -152,8 +158,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         decision.action = "submit"
         decision.task_type = "review_session"
         items = winner.detail.get("items", [])
-        decision.task_title = f"Review {winner.detail.get('overdue_count', 0)} at-risk items"
-        decision.task_summary = "Spaced repetition items are overdue."
+        decision.task_title = f"复习 {winner.detail.get('overdue_count', 0)} 个快遗忘的内容"
+        decision.task_summary = "这些内容按记忆规律该复习了。"
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
             "session_kind": "due_review",
@@ -171,11 +177,11 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
         decision.action = "submit"
         decision.task_type = "prerequisite_review"
         concept = winner.detail.get("concept", "unknown")
-        decision.task_title = f"Review prerequisite: {concept}"
+        decision.task_title = f"先补基础：{concept}"
         decision.task_summary = (
-            f"Concept '{concept}' is a prerequisite gap "
-            f"(mastery {winner.detail.get('mastery', 0):.0%}). "
-            f"Strengthen this foundation before advancing."
+            f"「{concept}」是后续内容的前置知识，"
+            f"当前掌握度 {winner.detail.get('mastery', 0):.0%}。"
+            f"建议先巩固再继续学习。"
         )
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
@@ -192,8 +198,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     elif winner.signal_type == "weak_area":
         decision.action = "submit"
         decision.task_type = "wrong_answer_review"
-        decision.task_title = f"Review {winner.detail.get('unmastered_count', 0)} weak areas"
-        decision.task_summary = "Targeted exercises for unmastered wrong answers."
+        decision.task_title = f"巩固 {winner.detail.get('unmastered_count', 0)} 个薄弱点"
+        decision.task_summary = "针对做错的题目做巩固练习。"
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
             "content_mutation_hint": {
@@ -206,8 +212,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     elif winner.signal_type == "content_stale":
         decision.action = "submit"
         decision.task_type = "content_update"
-        decision.task_title = f"Update content: {winner.title}"
-        decision.task_summary = "Content has high error rates and hasn't been updated recently."
+        decision.task_title = f"更新内容：{winner.title}"
+        decision.task_summary = "这部分内容错误率较高且很久没更新了，建议重新整理。"
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
             "node_id": winner.entity_id,
@@ -218,8 +224,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     elif winner.signal_type == "guided_session_ready":
         decision.action = "submit"
         decision.task_type = "guided_session"
-        decision.task_title = "Guided study session available"
-        decision.task_summary = "A personalized guided study session is ready."
+        decision.task_title = "可以开始一次引导式学习"
+        decision.task_summary = "根据你的学习情况，已为你准备好一次个性化引导学习。"
         decision.input_json = {
             "course_id": str(winner.course_id) if winner.course_id else None,
             "trigger_signal": "guided_session_ready",
@@ -230,8 +236,8 @@ def rank_signals(signals: list[AgendaSignal]) -> AgendaDecision:
     elif winner.signal_type == "inactivity":
         decision.action = "submit"
         decision.task_type = "reentry_session"
-        decision.task_title = "Welcome back — quick re-entry session"
-        decision.task_summary = f"Inactive for {winner.detail.get('days_inactive', '?')} days. Preparing a low-friction restart."
+        decision.task_title = "欢迎回来，来一小段轻松的学习"
+        decision.task_summary = f"你已经 {winner.detail.get('days_inactive', '?')} 天没学习了，先从一个简单的内容重新开始。"
         decision.input_json = {
             "trigger_signal": "inactivity",
             "days_inactive": winner.detail.get("days_inactive"),

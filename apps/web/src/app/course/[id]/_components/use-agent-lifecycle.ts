@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { useWorkspaceStore } from "@/store/workspace";
 import { useChatStore } from "@/store/chat";
 import type { LearningMode } from "@/lib/block-system/types";
-import type { ChatAction } from "@/lib/api";
 import { updateUnlockContext } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
 import {
@@ -12,18 +11,6 @@ import {
   evaluateModeSuggestion,
 } from "@/app/_components/mode-recommendations";
 
-const VALID_CHAT_ACTION_TYPES: ChatAction["action"][] = [
-  "data_updated",
-  "focus_topic",
-  "add_block",
-  "remove_block",
-  "reorder_blocks",
-  "resize_block",
-  "apply_template",
-  "agent_insight",
-  "set_learning_mode",
-  "suggest_mode",
-];
 
 const MODE_EVAL_TTL_MS = 10 * 60 * 1000;
 const MODE_EVAL_RETRY_MS = 5_000;
@@ -40,13 +27,6 @@ interface ModeEvalGoalSnapshot {
   status: string;
   target_date: string | null;
   next_action: string | null;
-}
-
-interface ModeEvalProgressSnapshot {
-  average_mastery: number;
-  mastered: number;
-  reviewed: number;
-  in_progress: number;
 }
 
 function readModeEvalLatch(key: string): ModeEvalLatchState {
@@ -71,21 +51,12 @@ function writeModeEvalLatch(key: string, value: ModeEvalLatchState): void {
 function buildModeEvalFingerprint(
   currentMode: LearningMode,
   goals: ModeEvalGoalSnapshot[],
-  progress: ModeEvalProgressSnapshot | null,
 ): string {
   const goalsPart = goals
     .map((goal) => `${goal.id}:${goal.status}:${goal.target_date ?? ""}:${goal.next_action ?? ""}`)
     .sort()
     .join("|");
-  const progressPart = progress
-    ? [
-      progress.average_mastery.toFixed(3),
-      progress.mastered,
-      progress.reviewed,
-      progress.in_progress,
-    ].join(":")
-    : "no_progress";
-  return `${currentMode}::${goalsPart}::${progressPart}`;
+  return `${currentMode}::${goalsPart}`;
 }
 
 export function useModeEvaluator(
@@ -118,15 +89,13 @@ export function useModeEvaluator(
         const currentMode = useWorkspaceStore.getState().spaceLayout.mode as LearningMode | undefined;
         if (!currentMode) return;
 
-        const { listStudyGoals, getCourseProgress } = await import("@/lib/api");
+        const { listStudyGoals } = await import("@/lib/api");
         const goals = await listStudyGoals(courseId, "active");
-        const progress = await getCourseProgress(courseId);
         if (cancelled) return;
 
         const fingerprint = buildModeEvalFingerprint(
           currentMode,
           goals as unknown as ModeEvalGoalSnapshot[],
-          progress as unknown as ModeEvalProgressSnapshot,
         );
         const latestLatch = readModeEvalLatch(evalKey);
         const shouldSkip =
@@ -147,7 +116,6 @@ export function useModeEvaluator(
         const suggestion = evaluateModeSuggestion({
           currentMode,
           deadlines,
-          progress,
           t,
           tf,
         });
@@ -201,77 +169,4 @@ export function useInitPrompt(courseId: string, setChatOpen: (v: boolean) => voi
       return () => clearTimeout(timer);
     }
   }, [courseId, setChatOpen]);
-}
-
-export function useGreeting(
-  courseId: string,
-  course: unknown | null,
-  handleAction: (action: ChatAction) => void,
-) {
-  useEffect(() => {
-    if (!course) return;
-    const greetingKey = `greeting_shown_${courseId}`;
-    if (sessionStorage.getItem(greetingKey) === "true") return;
-
-    const chatState = useChatStore.getState();
-    const existing = chatState.messagesByCourse[courseId];
-    if (existing && existing.length > 0) return;
-
-    sessionStorage.setItem(greetingKey, "true");
-    let cancelled = false;
-
-    import("@/lib/api").then(({ getChatGreeting }) => {
-      if (cancelled) return;
-      getChatGreeting(courseId)
-        .then((result) => {
-          if (cancelled) return;
-          const store = useChatStore.getState();
-          const msgs = store.messagesByCourse[courseId] || [];
-          if (msgs.length === 0) {
-            const greetingMsg = {
-              id: `greeting-${courseId}`,
-              role: "assistant" as const,
-              content: result.greeting,
-              timestamp: new Date(),
-            };
-            useChatStore.setState((s) => ({
-              messagesByCourse: { ...s.messagesByCourse, [courseId]: [greetingMsg] },
-              messages: s.activeCourseId === courseId ? [greetingMsg] : s.messages,
-            }));
-          }
-          if (result.suggested_actions?.length) {
-            for (const action of result.suggested_actions) {
-              if (VALID_CHAT_ACTION_TYPES.includes(action.action as ChatAction["action"])) {
-                handleAction({
-                  action: action.action as ChatAction["action"],
-                  value: action.value,
-                  extra: action.extra,
-                });
-              }
-            }
-          }
-        })
-        .catch(() => {
-          if (cancelled) return;
-          const welcome = (course as { metadata?: Record<string, unknown> }).metadata
-            ?.welcome_message as string | undefined;
-          if (!welcome) return;
-          const store = useChatStore.getState();
-          const msgs = store.messagesByCourse[courseId] || [];
-          if (msgs.length === 0) {
-            const welcomeMsg = {
-              id: `welcome-${courseId}`,
-              role: "assistant" as const,
-              content: welcome,
-              timestamp: new Date(),
-            };
-            useChatStore.setState((s) => ({
-              messagesByCourse: { ...s.messagesByCourse, [courseId]: [welcomeMsg] },
-              messages: s.activeCourseId === courseId ? [welcomeMsg] : s.messages,
-            }));
-          }
-        });
-    });
-    return () => { cancelled = true; };
-  }, [course, courseId, handleAction]);
 }

@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@/test-utils";
 import { MessageBubble } from "./message-bubble";
@@ -48,9 +49,23 @@ describe("MessageBubble", () => {
     expect(screen.getByText("Hi there!")).toBeInTheDocument();
   });
 
+  it("renders assistant replies as Markdown", () => {
+    render(
+      <MessageBubble
+        message={makeMessage({
+          role: "assistant",
+          content: "## 学习提示\n\n- 先读题\n- 再思考\n\n`重点`",
+        })}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "学习提示" })).toBeInTheDocument();
+    expect(screen.getByText("先读题")).toBeInTheDocument();
+    expect(screen.getByText("重点").tagName).toBe("CODE");
+  });
+
   it("has correct aria-label for user messages", () => {
     render(<MessageBubble message={makeMessage()} />);
-    expect(screen.getByLabelText("Your message")).toBeInTheDocument();
+    expect(screen.getByLabelText(t("ui.your_message"))).toBeInTheDocument();
   });
 
   it("has correct aria-label for assistant messages", () => {
@@ -59,7 +74,7 @@ describe("MessageBubble", () => {
         message={makeMessage({ role: "assistant", content: "Reply" })}
       />
     );
-    expect(screen.getByLabelText("Assistant message")).toBeInTheDocument();
+    expect(screen.getByLabelText(t("ui.assistant_message"))).toBeInTheDocument();
   });
 
   it("renders action cards for assistant messages with actions", () => {
@@ -77,7 +92,7 @@ describe("MessageBubble", () => {
     expect(screen.getByText("Let me help")).toBeInTheDocument();
   });
 
-  it("renders verifier details when present", () => {
+  it("does not expose internal verifier diagnostics to the learner", () => {
     const msg = makeMessage({
       role: "assistant",
       content: "Answer",
@@ -90,7 +105,9 @@ describe("MessageBubble", () => {
       },
     });
     render(<MessageBubble message={msg} />);
-    expect(screen.getByText("Why this answer")).toBeInTheDocument();
+    expect(screen.queryByText(t("ui.why_this_answer"))).not.toBeInTheDocument();
+    expect(screen.queryByText("V001")).not.toBeInTheDocument();
+    expect(screen.queryByText("All good")).not.toBeInTheDocument();
   });
 
   it("shows ellipsis for empty content without images", () => {

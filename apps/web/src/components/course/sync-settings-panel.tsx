@@ -1,5 +1,7 @@
 "use client";
 
+import { t } from "@/lib/i18n";
+import { getSourceTypeLabel } from "@/lib/display-mappers";
 import { useCallback, useEffect, useState } from "react";
 import {
   RefreshCw,
@@ -30,12 +32,12 @@ interface SyncSettingsPanelProps {
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${hours} 小时前`;
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${days} 天前`;
 }
 
 function StatusBadge({ status }: { status: string | null }) {
@@ -43,7 +45,7 @@ function StatusBadge({ status }: { status: string | null }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-muted text-muted-foreground">
         <Clock className="size-3" />
-        Pending
+        待处理
       </span>
     );
   }
@@ -51,7 +53,7 @@ function StatusBadge({ status }: { status: string | null }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
         <CheckCircle2 className="size-3" />
-        Success
+        同步成功
       </span>
     );
   }
@@ -59,25 +61,25 @@ function StatusBadge({ status }: { status: string | null }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
         <AlertTriangle className="size-3" />
-        Auth Expired
+        登录已过期
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
       <XCircle className="size-3" />
-      Failed
+      同步失败
     </span>
   );
 }
 
 const INTERVAL_OPTIONS = [
-  { value: 1, label: "Every hour" },
-  { value: 6, label: "Every 6 hours" },
-  { value: 12, label: "Every 12 hours" },
-  { value: 24, label: "Every day" },
-  { value: 72, label: "Every 3 days" },
-  { value: 168, label: "Every week" },
+  { value: 1, label: t("ui.every_hour") },
+  { value: 6, label: t("ui.every_6h") },
+  { value: 12, label: t("ui.every_12h") },
+  { value: 24, label: t("ui.every_day") },
+  { value: 72, label: t("ui.every_3d") },
+  { value: 168, label: t("ui.every_week") },
 ];
 
 export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
@@ -106,9 +108,9 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
         enabled: !source.enabled,
       });
       setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-      toast.success(updated.enabled ? "Auto-sync enabled" : "Auto-sync paused");
+      toast.success(updated.enabled ? t("ui.autosync_enabled") : t("ui.autosync_paused"));
     } catch {
-      toast.error("Failed to update sync settings");
+      toast.error(t("ui.failed_update_sync"));
     }
   };
 
@@ -118,9 +120,9 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
         interval_hours: hours,
       });
       setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-      toast.success("Sync interval updated");
+      toast.success(t("ui.sync_interval_updated"));
     } catch {
-      toast.error("Failed to update interval");
+      toast.error(t("ui.failed_update_interval"));
     }
   };
 
@@ -130,12 +132,12 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
       const result = await scrapeNow(source.id);
       toast.success(
         result.content_changed
-          ? "New content found and synced!"
-          : "Content is up to date"
+          ? t("ui.new_content_synced")
+          : t("ui.content_uptodate")
       );
       await fetchSources();
     } catch {
-      toast.error("Sync failed");
+      toast.error(t("ui.sync_failed"));
     } finally {
       setScrapingId(null);
     }
@@ -145,9 +147,9 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
     try {
       await deleteScrapeSource(source.id);
       setSources((prev) => prev.filter((s) => s.id !== source.id));
-      toast.success("Sync source removed");
+      toast.success(t("ui.sync_source_removed"));
     } catch {
-      toast.error("Failed to remove sync source");
+      toast.error(t("ui.failed_remove_sync"));
     }
   };
 
@@ -168,7 +170,7 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <RefreshCw className="size-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold text-foreground">Auto Sync</h3>
+        <h3 className="text-sm font-semibold text-foreground">{t("ui.auto_sync")}</h3>
       </div>
 
       <div className="space-y-2">
@@ -194,8 +196,8 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
                   </a>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[11px] text-muted-foreground capitalize">
-                    {source.source_type}
+                  <span className="text-[11px] text-muted-foreground">
+                    {getSourceTypeLabel(source.source_type)}
                   </span>
                   {source.requires_auth && (
                     <span className="text-[11px] text-muted-foreground">
@@ -252,7 +254,7 @@ export function SyncSettingsPanel({ courseId }: SyncSettingsPanelProps) {
                 ) : (
                   <RefreshCw className="size-3" />
                 )}
-                Sync Now
+                立即同步
               </Button>
 
               {/* Interval selector */}

@@ -190,7 +190,7 @@ def _normalize_tf_answer(value: Any) -> str | None:
 
 def build_question_dedupe_key(question: str) -> str:
     """Build a stable question key for duplicate detection."""
-    return re.sub(r"[^a-z0-9]+", " ", _clean_string(question).lower()).strip()
+    return re.sub(r"[^\w\u4e00-\u9fff]+", " ", _clean_string(question).lower()).strip()
 
 
 class ProblemMetadataContract(BaseModel):
@@ -201,6 +201,14 @@ class ProblemMetadataContract(BaseModel):
     skill_focus: str = Field(min_length=2)
     source_section: str = Field(min_length=1)
     question_type: str
+    # Optional quality fields used by the curriculum-grounded question
+    # generator.  Keeping these in the shared contract lets the question bank
+    # retain its textbook anchor and a useful worked-solution structure.
+    source_anchor: str | None = None
+    question_role: str | None = None
+    solution_steps: list[str] = Field(default_factory=list)
+    common_mistake: str | None = None
+    method_summary: str | None = None
 
 
 class QuizQuestionContract(BaseModel):
@@ -328,6 +336,15 @@ def normalize_problem_annotation(
         "skill_focus": _normalize_skill_focus(metadata.get("skill_focus"), question_type),
         "source_section": _normalize_source_section(metadata.get("source_section"), title),
         "question_type": question_type,
+        "source_anchor": _clean_string(metadata.get("source_anchor")) or None,
+        "question_role": _clean_string(metadata.get("question_role")) or None,
+        "solution_steps": [
+            str(item).strip()
+            for item in (metadata.get("solution_steps") or [])
+            if str(item).strip()
+        ] if isinstance(metadata.get("solution_steps"), list) else [],
+        "common_mistake": _clean_string(metadata.get("common_mistake")) or None,
+        "method_summary": _clean_string(metadata.get("method_summary")) or None,
     }
     if source:
         normalized_metadata["source_kind"] = source
@@ -352,6 +369,7 @@ def validate_question_payload(
     source: str | None = None,
     difficulty_layer_default: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    learner_language: str | None = None,
 ) -> QuizQuestionValidation:
     """Validate a quiz payload after normalization.
 
@@ -388,6 +406,21 @@ def validate_question_payload(
 
     if not explanation or len(explanation) < 6:
         errors.append("explanation: must be present and informative")
+
+    # A prompt is not a guarantee. Enforce the learner's selected interface
+    # language before a generated question can enter the practice bank.
+    if learner_language in {"zh", "en"}:
+        learner_text = " ".join([
+            normalized["question"],
+            explanation,
+            *(options or {}).values(),
+        ])
+        han_count = len(re.findall(r"[\u4e00-\u9fff]", learner_text))
+        english_words = re.findall(r"[A-Za-z]{3,}", learner_text)
+        if learner_language == "zh" and han_count < 2:
+            errors.append("language: learner-facing question content must be Simplified Chinese")
+        elif learner_language == "en" and len(english_words) < 2:
+            errors.append("language: learner-facing question content must be English")
 
     if question_type == "mc":
         if not options or len(options) != 4:

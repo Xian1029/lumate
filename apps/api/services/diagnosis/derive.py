@@ -16,7 +16,10 @@ from services.practice.annotation import build_practice_problem
 
 logger = logging.getLogger(__name__)
 
-_DERIVE_SYSTEM = "You design diagnostic questions. Output valid JSON only."
+_DERIVE_SYSTEM = (
+    "You create one friendly follow-up question for a school-age learner. "
+    "Use the same language as the original question and output valid JSON only."
+)
 
 _DERIVE_PROMPT = """You are a diagnostic question designer. A student got this question wrong.
 Generate a SIMPLIFIED "clean" diagnostic version that:
@@ -24,6 +27,11 @@ Generate a SIMPLIFIED "clean" diagnostic version that:
 2. Removes all distractors, traps, and misleading wording
 3. Uses simpler numbers/context
 4. If multi-step, only keep the key step
+5. MUST use a different scenario, wording, and values from the original question
+6. Write the question and explanation in the same language as the original question
+7. Use words a 10-14 year old can understand; never mention diagnosis, cognitive gaps, traps, or system analysis
+8. The explanation must be encouraging and concrete: first state the key idea, then show one short step
+9. Keep the question under 80 Chinese characters (or 45 English words) and the explanation to 2-3 short sentences
 
 Original question: {question}
 Question type: {question_type}
@@ -76,16 +84,21 @@ def _extract_json_object(text: str) -> dict:
 
 def _fill_defaults(derived: dict, wa: WrongAnswer, problem: PracticeProblem) -> dict:
     """Fill in missing fields from the LLM response with sensible defaults."""
+    is_zh = any("\u4e00" <= char <= "\u9fff" for char in problem.question)
     if not derived.get("question"):
-        derived["question"] = f"Diagnostic check: {problem.question}"
+        derived["question"] = (
+            f"换一种简单说法，再想想这道题：{problem.question}"
+            if is_zh else f"Let's try a simpler version: {problem.question}"
+        )
     if derived.get("options") is None and problem.options:
         derived["options"] = problem.options
     if not derived.get("correct_answer"):
         derived["correct_answer"] = wa.correct_answer or problem.correct_answer
     if not derived.get("explanation"):
         derived["explanation"] = (
-            "This simplified follow-up checks whether the core concept is understood "
-            "without the original traps or extra complexity."
+            "先找到题目中最关键的条件，再按学过的规则一步一步判断。别着急，想清楚这一步就可以了。"
+            if is_zh else
+            "Find the most important condition first, then apply the rule one step at a time."
         )
     if not derived.get("core_concept_preserved"):
         derived["core_concept_preserved"] = (
@@ -93,7 +106,7 @@ def _fill_defaults(derived: dict, wa: WrongAnswer, problem: PracticeProblem) -> 
             or problem.question[:80]
         )
     if not derived.get("simplifications_made"):
-        derived["simplifications_made"] = ["Fallback diagnostic variant based on the original question."]
+        derived["simplifications_made"] = ["换成更短、更直接的问法。" if is_zh else "Used a shorter, more direct question."]
     return derived
 
 

@@ -20,9 +20,10 @@ async def auto_prepare(
     course_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> dict:
-    """Orchestrate full auto-preparation: notes + flashcards + quiz in parallel.
+    """Orchestrate optional learning assets after material dispatch.
 
-    Each step is independent -- one failure doesn't block the others.
+    Each step is independent -- one failure doesn't block the others or
+    change the authoritative ingestion job back to a processing state.
     Runs all three concurrently for speed (30-second target).
     """
     import asyncio as _asyncio
@@ -43,7 +44,7 @@ async def auto_prepare(
 
     async def _safe_quiz() -> tuple[int, str | None]:
         try:
-            return (await auto_generate_quiz(db_factory, course_id), None)
+            return (await auto_generate_quiz(db_factory, course_id, user_id), None)
         except Exception as e:
             logger.exception("auto_prepare: quiz step failed")
             return (0, str(e))
@@ -53,13 +54,16 @@ async def auto_prepare(
             return (0, f"Unexpected: {result}")
         return result
 
+    # Notes are the canonical K-12 learning representation. Generate them
+    # first, then derive both recall formats from the same per-section notes.
+    notes_result = await _safe_notes()
     results = await _asyncio.gather(
-        _safe_notes(), _safe_flashcards(), _safe_quiz(),
+        _safe_flashcards(), _safe_quiz(),
         return_exceptions=True,
     )
-    n_count, n_err = _unpack(results[0])
-    f_count, f_err = _unpack(results[1])
-    q_count, q_err = _unpack(results[2])
+    n_count, n_err = _unpack(notes_result)
+    f_count, f_err = _unpack(results[0])
+    q_count, q_err = _unpack(results[1])
     summary: dict = {
         "notes": n_count,
         "flashcards": f_count,

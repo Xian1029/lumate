@@ -84,6 +84,7 @@ class AgentContext:
     user_message: str = ""
     conversation_history: list[dict] = field(default_factory=list)
     images: list[dict] = field(default_factory=list)  # [{"data": base64, "media_type": str}]
+    response_language: str = "zh"
 
     # Tab / Scene context (v3)
     active_tab: str = ""
@@ -188,6 +189,7 @@ class AgentContext:
             conversation_id=self.conversation_id,
             session_id=self.session_id,
             user_message=self.user_message,
+            response_language=self.response_language,
             active_tab=self.active_tab,
             intent=self.intent,
             intent_confidence=self.intent_confidence,
@@ -219,6 +221,7 @@ class AgentContext:
             "conversation_id": str(self.conversation_id) if self.conversation_id else None,
             "session_id": str(self.session_id),
             "user_message": self.user_message,
+            "response_language": self.response_language,
             "active_tab": self.active_tab,
             "intent": self.intent.value if self.intent else IntentType.GENERAL.value,
             "intent_confidence": self.intent_confidence,
@@ -268,6 +271,7 @@ class AgentContext:
             conversation_id=uuid.UUID(str(conversation_id)) if conversation_id else None,
             session_id=uuid.UUID(str(session_id)) if session_id else uuid.uuid4(),
             user_message=str(payload.get("user_message") or ""),
+            response_language=str(payload.get("response_language") or "zh"),
             active_tab=str(payload.get("active_tab") or ""),
             intent=intent,
             intent_confidence=float(payload.get("intent_confidence") or 0.0),

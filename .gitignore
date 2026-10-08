@@ -47,6 +47,8 @@ tmp/
 
 # Temporary directories
 sessions/
+.pnpm-store/
+.workbuddy/
 
 # Local database
 *.db

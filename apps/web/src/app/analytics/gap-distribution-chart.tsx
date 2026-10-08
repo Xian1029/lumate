@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import {
   PieChart,
   Pie,
@@ -34,7 +35,7 @@ export function GapDistributionChart({ gapBreakdown }: GapDistributionChartProps
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
-      <h2 className="font-medium mb-4 text-foreground">Knowledge Gap Distribution</h2>
+      <h2 className="font-medium mb-4 text-foreground">{t("ui.knowledge_gap_distribution")}</h2>
       {data.length > 0 ? (
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
@@ -60,7 +61,7 @@ export function GapDistributionChart({ gapBreakdown }: GapDistributionChartProps
           </ResponsiveContainer>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground py-8 text-center">No gap data yet</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t("ui.no_gap_data_yet")}</p>
       )}
     </section>
   );

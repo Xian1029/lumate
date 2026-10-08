@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useBatchManager } from "@/hooks/use-batch-manager";
@@ -35,15 +36,15 @@ export function GeneratedQuizCard({ courseId }: GeneratedQuizCardProps) {
       const result = await saveGeneratedQuiz(
         courseId,
         draft.rawContent,
-        "Chat-generated practice set",
+        t("ui.chat_gen_practice"),
         replaceBatchId,
       );
-      toast.success(`Saved ${result.saved} questions to the course quiz bank`);
+      toast.success(`已保存 ${result.saved} 道题目到课程题库`);
       triggerRefresh("practice");
       await loadBatches();
       clearGeneratedQuizDraft(courseId);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save generated quiz");
+      toast.error(error instanceof Error ? error.message : t("ui.failed_save_quiz"));
     } finally {
       setSaving(false);
     }
@@ -54,9 +55,9 @@ export function GeneratedQuizCard({ courseId }: GeneratedQuizCardProps) {
       <div className="rounded-xl border border-border/70 bg-background px-3 py-2.5" data-testid="generated-quiz-card">
         {draft ? (
           <>
-            <p className="text-sm font-medium text-foreground">Generated questions detected</p>
+            <p className="text-sm font-medium text-foreground">{t("ui.generated_questions_detected")}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {draft.questionCount} question{draft.questionCount === 1 ? "" : "s"} ready to save to the course quiz bank.
+              {draft.questionCount} 道题目已准备好，可以保存到课程题库。
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {latestBatch?.is_active ? (
@@ -67,11 +68,11 @@ export function GeneratedQuizCard({ courseId }: GeneratedQuizCardProps) {
                   disabled={saving}
                   onClick={() => void handleSave(latestBatch.batch_id)}
                 >
-                  Replace Latest
+                  替换最新版本
                 </Button>
               ) : null}
               <Button type="button" size="sm" disabled={saving} onClick={() => void handleSave()}>
-                Save New
+                另存为新版本
               </Button>
               <Button
                 type="button"
@@ -80,13 +81,13 @@ export function GeneratedQuizCard({ courseId }: GeneratedQuizCardProps) {
                 disabled={saving}
                 onClick={() => clearGeneratedQuizDraft(courseId)}
               >
-                Dismiss
+                忽略
               </Button>
             </div>
           </>
         ) : (
           <>
-            <p className="text-sm font-medium text-foreground">Generated quiz not saved</p>
+            <p className="text-sm font-medium text-foreground">{t("ui.generated_quiz_not_saved")}</p>
             <p className="mt-1 text-xs text-muted-foreground">{parseError}</p>
             <div className="mt-3">
               <Button

@@ -41,6 +41,18 @@ describe("courses API secure request behavior", () => {
     expect(headers.get("Content-Type")).toBeNull();
   });
 
+  it("uploadFile explicitly links a replacement upload to its failed processing record", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ nodes_created: 1 }));
+    const file = new File(["fixed document"], "notes.txt", { type: "text/plain" });
+
+    await uploadFile("course-1", file, undefined, "failed-job-1");
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    expect(form.get("course_id")).toBe("course-1");
+    expect(form.get("replace_failed_job_id")).toBe("failed-job-1");
+  });
+
   it("scrapeUrl includes auth + csrf + credentials without forcing content-type", async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ nodes_created: 2 }));
 

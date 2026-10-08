@@ -42,6 +42,7 @@ class OnboardingRequest(BaseModel):
     message: str = Field(default="", max_length=2000)
     history: list[dict] = Field(default_factory=list)
     partial_profile: dict | None = None
+    language: str = "zh"
 
 
 class LayoutFromProfileRequest(BaseModel):
@@ -102,6 +103,7 @@ async def interview_turn(
         phase=TaskPhase.IDLE,
     )
     ctx.metadata["learner_profile"] = body.partial_profile or {}
+    ctx.metadata["response_language"] = body.language
 
     try:
         ctx = await _onboarding_agent.execute(ctx, db)

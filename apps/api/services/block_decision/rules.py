@@ -201,13 +201,21 @@ def rule_mastery_gate(
 ) -> BlockOperation | None:
     """Multiple prerequisite gaps → show insight suggesting prerequisite review."""
     gaps = [s for s in signals if s.get("signal_type") == "prerequisite_gap"]
-    if len(gaps) >= 2 and "agent_insight" not in current_blocks:
-        gap_concepts = [s.get("concept", "unknown") for s in gaps[:3]]
+    gap_concepts = list(dict.fromkeys(
+        str((s.get("detail") or {}).get("concept") or s.get("concept") or "").strip()
+        for s in gaps
+        if isinstance(s.get("detail", {}), dict)
+    ))
+    gap_concepts = [
+        concept for concept in gap_concepts
+        if concept and concept.casefold() not in {"unknown", "none", "null", "未知", "未命名"}
+    ][:3]
+    if len(gap_concepts) >= 2 and "agent_insight" not in current_blocks:
         return BlockOperation(
             action="add", block_type="agent_insight",
             reason=(
-                f"Prerequisites not yet mastered: {', '.join(gap_concepts)}. "
-                "Recommend reviewing these before advancing."
+                f"检测到以下前置知识还需要巩固：{'、'.join(gap_concepts)}。"
+                "建议先复习这些内容，再继续学习。"
             ),
             signal_source="prerequisite_gap", urgency=80, size="small",
             config={"insightType": "mastery_gate", "concepts": gap_concepts},
@@ -337,16 +345,5 @@ def rule_mastery_complete(
     current_blocks: list[str],
     current_mode: str | None,
 ) -> BlockOperation | None:
-    """All concepts mastered → suggest maintenance mode."""
-    # Only fire when we actually received signals (empty list = collection failed)
-    if not signals:
-        return None
-    weak = [s for s in signals if s.get("signal_type") in ("weak_area", "forgetting_risk")]
-    if not weak and current_mode != "maintenance" and current_blocks:
-        return BlockOperation(
-            action="add", block_type="agent_insight",
-            reason="Great progress! All concepts look solid. Consider switching to maintenance mode.",
-            signal_source="mastery_complete", urgency=50, size="full",
-            config={"insightType": "mode_suggestion", "suggestedMode": "maintenance"},
-        )
+    """Maintenance mode was retired; mastery no longer triggers a mode switch."""
     return None

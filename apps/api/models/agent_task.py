@@ -12,7 +12,7 @@ from database import Base
 
 
 class AgentTask(Base):
-    """Tracks agent work items that should be visible outside the chat stream."""
+    """Tracks technical AI/background work, not LearningPlan approval or task completion."""
 
     __tablename__ = "agent_tasks"
 

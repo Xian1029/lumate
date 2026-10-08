@@ -8,6 +8,7 @@ import type {
   LearningMode,
   SpaceLayout,
 } from "./types";
+import { defaultBlockSource } from "./types";
 
 const BLOCK_TYPES: readonly BlockType[] = [
   "notes",
@@ -24,7 +25,7 @@ const BLOCK_TYPES: readonly BlockType[] = [
 ] as const;
 
 const BLOCK_SIZES: readonly BlockSize[] = ["small", "medium", "large", "full"] as const;
-const BLOCK_SOURCES: readonly BlockSource[] = ["template", "user", "agent"] as const;
+const BLOCK_SOURCES: readonly BlockSource[] = ["SYSTEM_REQUIRED", "SYSTEM_OPTIONAL", "USER_ADDED"] as const;
 const LEARNING_MODES: readonly LearningMode[] = [
   "course_following",
   "self_paced",
@@ -44,6 +45,7 @@ const BLOCK_DEFAULT_SIZES: Record<BlockType, BlockSize> = {
   wrong_answers: "medium",
   forecast: "small",
   agent_insight: "full",
+  summary: "full",
 };
 
 let fallbackBlockIdCounter = 0;
@@ -62,6 +64,14 @@ function isBlockSize(value: unknown): value is BlockSize {
 
 function isBlockSource(value: unknown): value is BlockSource {
   return typeof value === "string" && BLOCK_SOURCES.includes(value as BlockSource);
+}
+
+function normalizeSource(value: unknown, type: BlockType): BlockSource {
+  if (isBlockSource(value)) return value;
+  // Legacy layouts did not distinguish source from lifecycle policy. Preserve
+  // the one structural block; treat all other legacy instances as optional.
+  if (value === "user") return "USER_ADDED";
+  return defaultBlockSource(type);
 }
 
 export function isLearningMode(value: unknown): value is LearningMode {
@@ -115,8 +125,13 @@ function sanitizeBlock(
     position: Number.isFinite(value.position) ? Number(value.position) : index,
     size: isBlockSize(value.size) ? value.size : BLOCK_DEFAULT_SIZES[type],
     config: isRecord(value.config) ? value.config : {},
-    visible: typeof value.visible === "boolean" ? value.visible : true,
-    source: isBlockSource(value.source) ? value.source : "user",
+    isVisible: typeof value.isVisible === "boolean"
+      ? value.isVisible
+      : typeof value.visible === "boolean" ? value.visible : true,
+    isPinned: typeof value.isPinned === "boolean"
+      ? value.isPinned
+      : typeof value.fixed === "boolean" ? value.fixed : false,
+    source: normalizeSource(value.source, type),
     agentMeta: sanitizeAgentMeta(value.agentMeta),
   };
 }
@@ -143,15 +158,52 @@ export function parseSpaceLayout(value: unknown): SpaceLayout | null {
         : 2,
   };
 
+  if (
+    typeof value.focusedBlockId === "string"
+    && blocks.some((block) => block.id === value.focusedBlockId)
+  ) {
+    layout.focusedBlockId = value.focusedBlockId;
+  }
+
   if (isLearningMode(value.mode)) {
-    layout.mode = value.mode;
+    layout.mode = value.mode === "maintenance" ? "self_paced" : value.mode;
   }
 
   return layout;
 }
 
 export function normalizeSpaceLayout(value: SpaceLayout): SpaceLayout {
-  return parseSpaceLayout(value) ?? { templateId: null, blocks: [], columns: 2 };
+  const parsed = parseSpaceLayout(value) ?? { templateId: null, blocks: [], columns: 2 };
+  const required: Array<{ type: BlockType; size: BlockSize }> = [
+    { type: "chapter_list", size: "full" },
+    { type: "notes", size: "full" },
+  ];
+  let blocks = [...parsed.blocks];
+  for (const item of required) {
+    const existingIndex = blocks.findIndex((block) => block.type === item.type);
+    if (existingIndex >= 0) {
+      blocks[existingIndex] = { ...blocks[existingIndex], isVisible: true, source: "SYSTEM_REQUIRED" };
+    } else {
+      blocks.push({
+        id: `core-${item.type}`,
+        type: item.type,
+        position: blocks.length,
+        size: item.size,
+        config: {},
+        isVisible: true,
+        isPinned: false,
+        source: "SYSTEM_REQUIRED",
+      });
+    }
+  }
+  blocks = blocks.map((block) => block.type === "chapter_list" || block.type === "notes"
+    ? { ...block, size: "full" as BlockSize }
+    : block);
+  const outline = blocks.find((block) => block.type === "chapter_list");
+  if (outline) {
+    blocks = [outline, ...blocks.filter((block) => block.type !== "chapter_list")];
+  }
+  return { ...parsed, blocks: blocks.map((block, position) => ({ ...block, position })) };
 }
 
 export function getSpaceLayoutStorageKey(courseId: string): string {
@@ -163,7 +215,8 @@ export function loadStoredSpaceLayout(courseId: string): SpaceLayout | null {
   if (!raw) return null;
 
   try {
-    return parseSpaceLayout(JSON.parse(raw));
+    const parsed = parseSpaceLayout(JSON.parse(raw));
+    return parsed ? normalizeSpaceLayout(parsed) : null;
   } catch {
     return null;
   }

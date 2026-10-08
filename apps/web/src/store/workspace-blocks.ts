@@ -10,10 +10,12 @@ import type {
   BlockType,
   BlockSize,
   BlockSource,
+  LegacyBlockSource,
   AgentBlockMeta,
   SpaceLayout,
   LearningMode,
 } from "@/lib/block-system/types";
+import { canRemoveBlock, defaultBlockSource } from "@/lib/block-system/types";
 import { buildLayoutFromTemplate, buildLayoutFromMode } from "@/lib/block-system/templates";
 import { createBlockId, normalizeSpaceLayout, parseSpaceLayout } from "@/lib/block-system/layout-storage";
 import { BLOCK_REGISTRY } from "@/lib/block-system/registry";
@@ -32,7 +34,13 @@ function reorderBlocksByType(blocks: BlockInstance[], orderedTypes: BlockType[])
     byType.set(b.type, list);
   }
   const reordered: BlockInstance[] = [];
+  // The course outline is structural navigation and must stay first even when
+  // user/agent reorder requests omit it or try to move it.
+  const outline = byType.get("chapter_list")?.shift();
+  if (outline) reordered.push(outline);
+  if (byType.get("chapter_list")?.length === 0) byType.delete("chapter_list");
   for (const type of orderedTypes) {
+    if (type === "chapter_list") continue;
     const list = byType.get(type);
     if (list?.length) {
       reordered.push(list.shift()!);
@@ -81,14 +89,20 @@ function recordDismiss(courseId: string, blockType: string, reason?: string): vo
 
 export interface BlockSystemState {
   spaceLayout: SpaceLayout;
-  addBlock: (type: BlockType, config?: Record<string, unknown>, source?: BlockSource, size?: BlockSize) => void;
+  addBlock: (type: BlockType, config?: Record<string, unknown>, source?: BlockSource | LegacyBlockSource, size?: BlockSize) => void;
   lastRemovedBlock: { block: BlockInstance; index: number } | null;
   removeBlock: (blockId: string) => void;
   undoRemoveBlock: () => void;
   removeBlockByType: (type: BlockType) => void;
+  pinBlock: (blockId: string) => void;
+  unpinBlock: (blockId: string) => void;
+  hideBlock: (blockId: string) => void;
+  showBlock: (blockId: string) => void;
+  resetLayout: (layout: SpaceLayout) => void;
   reorderBlocks: (orderedTypes: BlockType[]) => void;
   resizeBlock: (blockId: string, size: BlockSize) => void;
   updateBlockConfig: (blockId: string, config: Record<string, unknown>) => void;
+  toggleFocusedBlock: (blockId: string) => void;
   applyBlockTemplate: (templateId: string) => void;
   agentAddBlock: (type: BlockType, config: Record<string, unknown>, meta: AgentBlockMeta) => void;
   approveAgentBlock: (blockId: string) => void;
@@ -127,18 +141,39 @@ export function createBlockSlice<TState extends BlockSystemState>(
     lastRemovedBlock: null,
     spaceLayout: { templateId: null, blocks: [], columns: 2 },
 
-    addBlock: (type, config = {}, source = "user", size) => {
+    addBlock: (type, config = {}, source = "USER_ADDED", size) => {
       const entry = BLOCK_REGISTRY[type];
       if (!entry) return;
       const blocks = get().spaceLayout.blocks;
+      const existing = blocks.find((block) => block.type === type);
+      if (existing) {
+        set((s) => ({
+          layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+          spaceLayout: {
+            ...s.spaceLayout,
+            blocks: s.spaceLayout.blocks.map((block) => block.id === existing.id
+              ? {
+                ...block,
+                isVisible: true,
+                config: { ...block.config, ...config },
+                size: size ?? block.size,
+              }
+              : block),
+          },
+        }));
+        return;
+      }
       const newBlock: BlockInstance = {
         id: nextBlockId(),
         type,
         position: blocks.length,
         size: size ?? entry.defaultSize,
         config: { ...entry.defaultConfig, ...config },
-        visible: true,
-        source,
+        isVisible: true,
+        isPinned: false,
+        source: source === "user" || source === "USER_ADDED"
+          ? "USER_ADDED"
+          : source === "SYSTEM_REQUIRED" ? "SYSTEM_REQUIRED" : defaultBlockSource(type),
       };
       set((s) => ({
         layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
@@ -150,10 +185,15 @@ export function createBlockSlice<TState extends BlockSystemState>(
       set((state) => {
         const idx = state.spaceLayout.blocks.findIndex((b) => b.id === blockId);
         const block = state.spaceLayout.blocks[idx];
+        if (block && !canRemoveBlock(block.source)) return state;
         return {
           layoutHistory: pushHistory(state.layoutHistory, state.spaceLayout),
           lastRemovedBlock: block ? { block, index: idx } : null,
-          spaceLayout: { ...state.spaceLayout, blocks: state.spaceLayout.blocks.filter((b) => b.id !== blockId) },
+          spaceLayout: {
+            ...state.spaceLayout,
+            focusedBlockId: state.spaceLayout.focusedBlockId === blockId ? null : state.spaceLayout.focusedBlockId,
+            blocks: state.spaceLayout.blocks.filter((b) => b.id !== blockId),
+          },
         };
       });
     },
@@ -172,11 +212,41 @@ export function createBlockSlice<TState extends BlockSystemState>(
       set((s) => {
         const idx = s.spaceLayout.blocks.findIndex((b) => b.type === type);
         if (idx === -1) return s;
+        if (!canRemoveBlock(s.spaceLayout.blocks[idx].source)) return s;
         const blocks = [...s.spaceLayout.blocks];
         blocks.splice(idx, 1);
         return { spaceLayout: { ...s.spaceLayout, blocks: blocks.map((b, i) => ({ ...b, position: i })) } };
       });
     },
+
+    pinBlock: (blockId) => set((s) => ({
+      layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+      spaceLayout: { ...s.spaceLayout, blocks: s.spaceLayout.blocks.map((b) => b.id === blockId ? { ...b, isPinned: true, isVisible: true } : b) },
+    })),
+
+    unpinBlock: (blockId) => set((s) => ({
+      layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+      spaceLayout: { ...s.spaceLayout, blocks: s.spaceLayout.blocks.map((b) => b.id === blockId ? { ...b, isPinned: false } : b) },
+    })),
+
+    hideBlock: (blockId) => set((s) => {
+      const block = s.spaceLayout.blocks.find((b) => b.id === blockId);
+      if (!block || block.source === "SYSTEM_REQUIRED") return s;
+      return {
+        layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+        spaceLayout: { ...s.spaceLayout, focusedBlockId: s.spaceLayout.focusedBlockId === blockId ? null : s.spaceLayout.focusedBlockId, blocks: s.spaceLayout.blocks.map((b) => b.id === blockId ? { ...b, isVisible: false, isPinned: false } : b) },
+      };
+    }),
+
+    showBlock: (blockId) => set((s) => ({
+      layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+      spaceLayout: { ...s.spaceLayout, blocks: s.spaceLayout.blocks.map((b) => b.id === blockId ? { ...b, isVisible: true } : b) },
+    })),
+
+    resetLayout: (layout) => set((s) => ({
+      layoutHistory: pushHistory(s.layoutHistory, s.spaceLayout),
+      spaceLayout: normalizeSpaceLayout(layout),
+    })),
 
     reorderBlocks: (orderedTypes) => {
       set((s) => {
@@ -197,6 +267,19 @@ export function createBlockSlice<TState extends BlockSystemState>(
       }));
     },
 
+    toggleFocusedBlock: (blockId) => {
+      set((state) => {
+        const exists = state.spaceLayout.blocks.some((block) => block.id === blockId && block.isVisible);
+        if (!exists) return state;
+        return {
+          spaceLayout: {
+            ...state.spaceLayout,
+            focusedBlockId: state.spaceLayout.focusedBlockId === blockId ? null : blockId,
+          },
+        };
+      });
+    },
+
     applyBlockTemplate: (templateId) => {
       const layout = buildLayoutFromTemplate(templateId);
       if (layout) {
@@ -210,27 +293,45 @@ export function createBlockSlice<TState extends BlockSystemState>(
       if (!entry) return;
       const blocks = get().spaceLayout.blocks;
 
-      // Limit: at most 1 agent_insight block at a time to avoid notification spam
+      // Keep one insight area, but reuse a learner-added companion block when a
+      // concrete insight arrives so manual customization never blocks the agent.
       if (type === "agent_insight") {
-        const existingInsights = blocks.filter((b) => b.type === "agent_insight");
-        if (existingInsights.length >= 1) return;
+        const existingInsight = blocks.find((b) => b.type === "agent_insight");
+        if (existingInsight) {
+          set((s) => ({
+            spaceLayout: {
+              ...s.spaceLayout,
+              blocks: s.spaceLayout.blocks.map((block) => block.id === existingInsight.id
+                ? {
+                  ...block,
+                  isVisible: true,
+                  source: "SYSTEM_OPTIONAL",
+                  config: { ...entry.defaultConfig, ...config },
+                  agentMeta: meta,
+                }
+                : block),
+            },
+          }));
+          return;
+        }
       }
 
-      const position = meta.needsApproval ? 0 : blocks.length;
+      // Agent suggestions and newly unlocked features should never displace
+      // the learner's existing workspace. Always append them at the bottom.
+      const position = blocks.length;
       const newBlock: BlockInstance = {
         id: nextBlockId(),
         type,
         position,
         size: entry.defaultSize,
         config: { ...entry.defaultConfig, ...config },
-        visible: true,
-        source: "agent",
+        isVisible: true,
+        isPinned: false,
+        source: "SYSTEM_OPTIONAL",
         agentMeta: meta,
       };
       set((s) => {
-        const allBlocks = meta.needsApproval
-          ? [newBlock, ...s.spaceLayout.blocks]
-          : [...s.spaceLayout.blocks, newBlock];
+        const allBlocks = [...s.spaceLayout.blocks, newBlock];
         return { spaceLayout: { ...s.spaceLayout, blocks: allBlocks.map((b, i) => ({ ...b, position: i })) } };
       });
     },
@@ -271,16 +372,18 @@ export function createBlockSlice<TState extends BlockSystemState>(
     loadBlocks: (layout) => {
       const parsed = parseSpaceLayout(layout);
       if (parsed) {
-        set({ spaceLayout: parsed });
+        set({ spaceLayout: normalizeSpaceLayout(parsed) });
       }
     },
 
     setLearningMode: (mode) => {
+      if (mode === "maintenance") mode = "self_paced";
       const layout = buildLayoutFromMode(mode);
       set({ spaceLayout: normalizeSpaceLayout(layout) });
     },
 
     setSpaceMode: (mode) => {
+      if (mode === "maintenance") mode = "self_paced";
       set((s) => ({ spaceLayout: { ...s.spaceLayout, mode } }));
     },
 
@@ -310,11 +413,12 @@ export function createBlockSlice<TState extends BlockSystemState>(
               position: blocks.length,
               size: op.size ?? entry.defaultSize,
               config: { ...entry.defaultConfig, ...op.config },
-              visible: true,
-              source: "agent",
+              isVisible: true,
+              isPinned: false,
+              source: "SYSTEM_OPTIONAL",
             });
           } else if (op.action === "remove") {
-            blocks = blocks.filter((b) => b.id !== op.blockId);
+            blocks = blocks.filter((b) => b.id !== op.blockId || !canRemoveBlock(b.source));
           } else if (op.action === "reorder") {
             blocks = reorderBlocksByType(blocks, op.orderedTypes);
           } else if (op.action === "resize") {
@@ -328,7 +432,7 @@ export function createBlockSlice<TState extends BlockSystemState>(
 
         return {
           layoutHistory: history,
-          spaceLayout: { ...state.spaceLayout, blocks: blocks.map((b, i) => ({ ...b, position: i })) },
+          spaceLayout: normalizeSpaceLayout({ ...state.spaceLayout, blocks: blocks.map((b, i) => ({ ...b, position: i })) }),
         };
       });
     },

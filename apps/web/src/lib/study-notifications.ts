@@ -4,6 +4,7 @@
  */
 
 import { getOptimalStudyWindows, getPersona, formatStudyWindow } from "./learner-persona";
+import { getLocale } from "./i18n";
 
 const LAST_NOTIF_KEY = "opentutor_last_study_notif";
 
@@ -49,12 +50,12 @@ function checkAndNotifyStudyReminder(): void {
   // Use locale-aware strings from localStorage cache if available,
   // fallback to English since Notification API runs outside React context.
   let title = "Time to study!";
-  let body = `This is your usual study time (${windowLabel}). Open OpenTutor to keep your streak going.`;
+  let body = `This is your usual study time (${windowLabel}). Open Lumate to keep your streak going.`;
   try {
-    const locale = localStorage.getItem("opentutor_locale") ?? "en";
+    const locale = getLocale();
     if (locale === "zh") {
       title = "\u8BE5\u5B66\u4E60\u4E86\uFF01";
-      body = `\u73B0\u5728\u662F\u4F60\u7684\u5E38\u89C4\u5B66\u4E60\u65F6\u95F4\uFF08${windowLabel}\uFF09\u3002\u6253\u5F00 OpenTutor \u4FDD\u6301\u5B66\u4E60\u8282\u594F\u3002`;
+      body = `\u73B0\u5728\u662F\u4F60\u7684\u5E38\u89C4\u5B66\u4E60\u65F6\u95F4\uFF08${windowLabel}\uFF09\u3002\u6253\u5F00\u542F\u77E5\u4F34\uFF0C\u4FDD\u6301\u5B66\u4E60\u8282\u594F\u3002`;
     }
   } catch { /* ignore */ }
   new Notification(title, {

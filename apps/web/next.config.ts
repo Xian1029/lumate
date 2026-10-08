@@ -32,6 +32,14 @@ const nextConfig: NextConfig = {
   // Without this, POST /api/courses/ gets a 308 before the rewrite runs, and the
   // redirected request may expose the backend origin, which CSP connect-src blocks.
   skipTrailingSlashRedirect: true,
+  // Next.js proxies `/api/*` to FastAPI. Its proxy layer caps request bodies at
+  // 10MB by default, which silently truncates large multipart uploads (>10MB)
+  // and makes FastAPI hang up the socket (ECONNRESET → 500 "Internal Server
+  // Error"). Raise it above the backend's 500MB upload limit (plus multipart
+  // boundary/field overhead) so PDF/PPTX uploads flow through intact.
+  experimental: {
+    proxyClientMaxBodySize: 550 * 1024 * 1024,
+  },
   async headers() {
     return [
       {
@@ -45,6 +53,22 @@ const nextConfig: NextConfig = {
       // beforeFiles ensures the API proxy runs before Next.js file matching
       // and trailing slash normalization, preventing 308 redirect races.
       beforeFiles: [
+        {
+          source: "/api/courses",
+          destination: `${API_URL}/courses/`,
+        },
+        {
+          source: "/api/courses/",
+          destination: `${API_URL}/courses/`,
+        },
+        // The FastAPI list/create route is canonical with a trailing slash.
+        // Next's normalisation can otherwise forward the no-slash URL and
+        // expose FastAPI's 307 redirect to the browser.  A direct local API
+        // redirect then becomes cross-origin and its CORS preflight fails.
+        {
+          source: "/api/learning-plans",
+          destination: `${API_URL}/learning-plans/`,
+        },
         {
           // FastAPI serves chat SSE on `/api/chat/` and responds with an
           // absolute 307 redirect if the trailing slash is lost. Handle chat

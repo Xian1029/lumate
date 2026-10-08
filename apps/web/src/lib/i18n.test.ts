@@ -67,5 +67,21 @@ describe("i18n", () => {
       initLocale();
       expect(getLocale()).toBe("en");
     });
+
+    it("uses the system language when no preference has been saved", () => {
+      localStorage.clear();
+      const originalLanguage = navigator.language;
+      Object.defineProperty(navigator, "language", { configurable: true, value: "zh-CN" });
+      initLocale();
+      expect(getLocale()).toBe("zh");
+      Object.defineProperty(navigator, "language", { configurable: true, value: originalLanguage });
+    });
+
+    it("recognizes the preference key used by earlier releases", () => {
+      localStorage.clear();
+      localStorage.setItem("opentutor_locale", "zh");
+      initLocale();
+      expect(getLocale()).toBe("zh");
+    });
   });
 });

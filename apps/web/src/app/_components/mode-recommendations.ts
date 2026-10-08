@@ -1,4 +1,4 @@
-import type { CourseProgress, StudyGoal } from "@/lib/api";
+import type { StudyGoal } from "@/lib/api";
 import type { LearningMode } from "@/lib/block-system/types";
 
 export interface GoalDeadlineSnapshot<TGoal extends Pick<StudyGoal, "target_date" | "title"> = StudyGoal> {
@@ -8,7 +8,7 @@ export interface GoalDeadlineSnapshot<TGoal extends Pick<StudyGoal, "target_date
 
 export interface ModeSuggestionDecision {
   suggestedMode: LearningMode;
-  recommendationKey: "exam_passed" | "error_rate" | "deadline" | "mastery";
+  recommendationKey: "exam_passed" | "deadline";
   reason: string;
   signals: string[];
   approvalCta: string;
@@ -17,7 +17,6 @@ export interface ModeSuggestionDecision {
 interface EvaluateModeSuggestionArgs {
   currentMode: LearningMode;
   deadlines: GoalDeadlineSnapshot<Pick<StudyGoal, "target_date" | "title">>[];
-  progress: Pick<CourseProgress, "average_mastery" | "mastered" | "reviewed" | "in_progress"> | null;
   t: (key: string) => string;
   tf: (key: string, values: Record<string, number | string>) => string;
 }
@@ -37,7 +36,6 @@ export function buildGoalDeadlineSnapshots<TGoal extends Pick<StudyGoal, "target
 export function evaluateModeSuggestion({
   currentMode,
   deadlines,
-  progress,
   t,
   tf,
 }: EvaluateModeSuggestionArgs): ModeSuggestionDecision | null {
@@ -48,11 +46,11 @@ export function evaluateModeSuggestion({
 
   if (currentMode === "exam_prep" && allDeadlinesPassed) {
     return {
-      suggestedMode: "maintenance",
+      suggestedMode: "self_paced",
       recommendationKey: "exam_passed",
       reason: t("course.modeSuggestion.examPassed"),
       signals: [t("course.modeSuggestion.signal.deadlinesPassed")],
-      approvalCta: t("course.modeSuggestion.switchMaintenance"),
+      approvalCta: t("course.modeSuggestion.switchSelfPaced"),
     };
   }
 
@@ -60,51 +58,15 @@ export function evaluateModeSuggestion({
     return null;
   }
 
-  const mastery = progress ? Math.round((progress.average_mastery ?? 0) * 100) : null;
-  const totalAttempts = progress
-    ? progress.mastered + progress.reviewed + progress.in_progress
-    : 0;
-  const errorRatePct =
-    progress && totalAttempts > 10
-      ? Math.round((progress.in_progress / totalAttempts) * 100)
-      : null;
-
-  if (upcoming && errorRatePct != null && errorRatePct > 40) {
-    return {
-      suggestedMode: "exam_prep",
-      recommendationKey: "error_rate",
-      reason: tf("course.modeSuggestion.errorRateDetailed", {
-        rate: errorRatePct,
-        days: upcoming.daysLeft,
-      }),
-      signals: [
-        tf("course.modeSuggestion.signal.errorRate", { rate: errorRatePct }),
-        tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft }),
-      ],
-      approvalCta: t("course.modeSuggestion.switchExamPrep"),
-    };
-  }
-
   if (upcoming) {
     return {
       suggestedMode: "exam_prep",
       recommendationKey: "deadline",
-      reason: tf("course.modeSuggestion.deadline", {
-        title: upcoming.goal.title,
-        days: upcoming.daysLeft,
-      }),
+      reason: upcoming.daysLeft === 0
+        ? tf("course.modeSuggestion.deadlineToday", { title: upcoming.goal.title })
+        : tf("course.modeSuggestion.deadline", { title: upcoming.goal.title, days: upcoming.daysLeft }),
       signals: [tf("course.modeSuggestion.signal.deadline", { days: upcoming.daysLeft })],
       approvalCta: t("course.modeSuggestion.switchExamPrep"),
-    };
-  }
-
-  if (mastery != null && mastery >= 85) {
-    return {
-      suggestedMode: "maintenance",
-      recommendationKey: "mastery",
-      reason: tf("course.modeSuggestion.mastery", { mastery }),
-      signals: [tf("course.modeSuggestion.signal.mastery", { mastery })],
-      approvalCta: t("course.modeSuggestion.switchMaintenance"),
     };
   }
 

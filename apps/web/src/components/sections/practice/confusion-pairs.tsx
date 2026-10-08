@@ -12,7 +12,7 @@ export function ConfusionPairs({ pairs }: ConfusionPairsProps) {
   return (
     <div className="space-y-3" data-testid="confusion-pairs">
       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        Confused Concepts
+        容易混淆的知识点
       </h4>
       {pairs.slice(0, 5).map((pair) => (
         <div
@@ -38,7 +38,7 @@ export function ConfusionPairs({ pairs }: ConfusionPairsProps) {
             </div>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Confused {pair.weight}× — review both concepts side by side
+            已混淆 {pair.weight} 次 —— 建议把这两个知识点放在一起对比学习
           </p>
         </div>
       ))}

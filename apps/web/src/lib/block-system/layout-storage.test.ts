@@ -1,6 +1,8 @@
+import { t } from "@/lib/i18n";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   loadStoredSpaceLayout,
+  normalizeSpaceLayout,
   parseSpaceLayout,
   saveStoredSpaceLayout,
 } from "./layout-storage";
@@ -39,7 +41,7 @@ describe("layout-storage", () => {
           config: null,
           visible: "yes",
           source: "agent",
-          agentMeta: { reason: "Needs retry", dismissible: false },
+          agentMeta: { reason: t("ui.needs_retry"), dismissible: false },
         },
         {
           id: "bad-type",
@@ -61,7 +63,7 @@ describe("layout-storage", () => {
   });
 
   it("round-trips persisted layouts through local storage", () => {
-    saveStoredSpaceLayout("course-1", {
+    const saved = saveStoredSpaceLayout("course-1", {
       templateId: null,
       columns: 2,
       mode: "self_paced",
@@ -78,22 +80,85 @@ describe("layout-storage", () => {
       ],
     });
 
-    expect(loadStoredSpaceLayout("course-1")).toEqual({
+    expect(loadStoredSpaceLayout("course-1")).toEqual(saved);
+    expect(saved.blocks[0].type).toBe("chapter_list");
+    expect(saved.blocks[0].position).toBe(0);
+    expect(saved.blocks[0].size).toBe("full");
+  });
+
+  it("keeps optional block size selected by the learner", () => {
+    const layout = normalizeSpaceLayout({
+      templateId: null,
+      columns: 2,
+      mode: "exam_prep",
+      blocks: [{
+        id: "plan-1",
+        type: "plan",
+        position: 0,
+        size: "medium",
+        config: {},
+        visible: true,
+        source: "template",
+      }],
+    });
+
+    expect(layout.blocks.find((block) => block.type === "plan")?.size).toBe("medium");
+    expect(layout.blocks.find((block) => block.type === "notes")).toEqual(
+      expect.objectContaining({ source: "SYSTEM_REQUIRED", isVisible: true }),
+    );
+  });
+
+  it("keeps optional flashcard sizing", () => {
+    const layout = normalizeSpaceLayout({
       templateId: null,
       columns: 2,
       mode: "self_paced",
+      blocks: [{
+        id: "flashcards-1",
+        type: "flashcards",
+        position: 0,
+        size: "medium",
+        config: {},
+        visible: true,
+        source: "template",
+      }],
+    });
+
+    expect(layout.blocks.find((block) => block.type === "flashcards")?.size).toBe("medium");
+  });
+
+  it("does not re-add optional blocks removed from an old layout", () => {
+    const layout = normalizeSpaceLayout({
+      templateId: null,
+      columns: 2,
+      mode: "course_following",
+      blocks: [{
+        id: "notes-1",
+        type: "notes",
+        position: 0,
+        size: "large",
+        config: {},
+        visible: true,
+        source: "template",
+      }],
+    });
+
+    expect(layout.blocks.some((block) => block.type === "quiz")).toBe(false);
+    expect(layout.blocks.some((block) => block.type === "flashcards")).toBe(false);
+  });
+
+  it("preserves hidden optional blocks during legacy normalization", () => {
+    const layout = normalizeSpaceLayout({
+      templateId: null,
+      columns: 2,
+      mode: "course_following",
       blocks: [
-        {
-          id: "notes-1",
-          type: "notes",
-          position: 0,
-          size: "large",
-          config: {},
-          visible: true,
-          source: "template",
-          agentMeta: undefined,
-        },
+        { id: "quiz-1", type: "quiz", position: 0, size: "medium", config: {}, visible: false, source: "template" },
+        { id: "cards-1", type: "flashcards", position: 1, size: "medium", config: {}, visible: false, source: "template" },
       ],
     });
+
+    expect(layout.blocks.find((block) => block.type === "quiz")?.isVisible).toBe(false);
+    expect(layout.blocks.find((block) => block.type === "flashcards")?.isVisible).toBe(false);
   });
 });

@@ -16,7 +16,7 @@ from schemas.preference import ResolvedPreferences
 SYSTEM_DEFAULTS: dict[str, str] = {
     "note_format": "bullet_point",
     "detail_level": "balanced",
-    "language": "en",
+    "language": "zh",
     "layout_preset": "balanced",
     "explanation_style": "step_by_step",
     "quiz_difficulty": "adaptive",

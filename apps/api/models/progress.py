@@ -46,6 +46,7 @@ class LearningProgress(Base):
     # v4: Layer progression diagnosis
     gap_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     # fundamental_gap | transfer_gap | trap_vulnerability | mastered
+    metadata_json: Mapped[Optional[dict]] = mapped_column(CompatJSONB, nullable=True)
 
     # Spaced repetition — FSRS-4.5 fields
     next_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

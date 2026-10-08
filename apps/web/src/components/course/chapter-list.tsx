@@ -1,5 +1,4 @@
 "use client";
-
 import Link from "next/link";
 import { FileText, FolderOpen, ChevronRight } from "lucide-react";
 import type { ContentNode } from "@/lib/api";
@@ -50,7 +49,7 @@ export function ChapterList({ courseId, nodes }: ChapterListProps) {
     );
   }
 
-  const treeLabel = t("chapter.navLabel") !== "chapter.navLabel" ? t("chapter.navLabel") : "Course chapters";
+  const treeLabel = t("chapter.navLabel") !== "chapter.navLabel" ? t("chapter.navLabel") : t("ui.course_chapters");
 
   return (
     <nav aria-label={treeLabel}>

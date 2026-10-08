@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RotateCcw, CheckCircle2, AlertTriangle } from "lucide-react";
 import { listWrongAnswers, retryWrongAnswer, getWrongAnswerStats, type WrongAnswer } from "@/lib/api";
@@ -9,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SkeletonText } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { questionTypeLabel } from "./question-type-label";
 
 interface WrongAnswersViewProps {
   courseId: string;
@@ -25,25 +27,23 @@ interface RetryState {
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
-  conceptual: "Conceptual",
-  procedural: "Procedural",
-  computational: "Computational",
-  reading: "Reading",
-  careless: "Careless",
+  conceptual: t("wrongAnswer.category.conceptual"),
+  procedural: t("wrongAnswer.category.procedural"),
+  computational: t("wrongAnswer.category.computational"),
+  reading: t("wrongAnswer.category.reading"),
+  careless: t("wrongAnswer.category.careless"),
 };
 
 const DIAGNOSIS_LABELS: Record<string, string> = {
-  fundamental_gap: "Fundamental gap",
-  trap_vulnerability: "Trap vulnerability",
-  carelessness: "Carelessness",
-  mastered: "Mastered",
+  fundamental_gap: t("ui.fundamental_gap_lower"),
+  trap_vulnerability: t("ui.trap_vuln_lower"),
+  carelessness: t("ui.carelessness"),
+  mastered: t("ui.mastered"),
 };
 
 function formatBadgeLabel(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  // 未知枚举兜底：返回中文占位，避免把内部英文枚举泄露给学生。
+  return "待分类";
 }
 
 function isChoiceQuestion(item: WrongAnswer): boolean {
@@ -78,10 +78,10 @@ function WrongAnswerRow({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
           <p className="text-sm font-medium text-foreground">
-            {item.question ?? "Untitled question"}
+            {item.question ?? t("ui.untitled_question")}
           </p>
           <div className="flex flex-wrap gap-2">
-            {item.question_type ? <Badge variant="outline">{item.question_type}</Badge> : null}
+            {item.question_type ? <Badge variant="outline">{questionTypeLabel(item.question_type, t)}</Badge> : null}
             {item.error_category ? (
               <Badge variant="secondary">
                 {CATEGORY_LABELS[item.error_category] ?? formatBadgeLabel(item.error_category)}
@@ -92,17 +92,18 @@ function WrongAnswerRow({
                 {DIAGNOSIS_LABELS[item.diagnosis] ?? formatBadgeLabel(item.diagnosis)}
               </Badge>
             ) : null}
-            <Badge variant="outline">Reviewed {item.review_count}x</Badge>
+            <Badge variant="outline">已错 {item.wrong_attempt_count} 次</Badge>
+            <Badge variant="outline">{t("wrongAnswer.reviewedCount").replace("{count}", String(item.review_count))}</Badge>
           </div>
         </div>
         <Badge variant={item.mastered ? "secondary" : "outline"}>
-          {item.mastered ? "Mastered" : "Needs retry"}
+          {item.mastered ? t("ui.mastered") : t("ui.needs_retry")}
         </Badge>
       </div>
 
       <div className="rounded-xl bg-muted/30 p-3 text-sm space-y-1">
         <p className="text-muted-foreground">
-          Your last answer: <span className="text-foreground">{item.user_answer || "—"}</span>
+          {t("wrongAnswer.lastAnswer")}：<span className="text-foreground">{item.user_answer || "—"}</span>
         </p>
         {item.knowledge_points?.length ? (
           <div className="flex flex-wrap gap-1.5 pt-1">
@@ -136,7 +137,7 @@ function WrongAnswerRow({
           <Input
             value={value}
             disabled={submitting}
-            placeholder="Type your retry answer"
+            placeholder={t("ui.type_your_retry_answer")}
             onChange={(event) => onRetryInputChange(item.id, event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && value.trim()) {
@@ -150,7 +151,7 @@ function WrongAnswerRow({
             disabled={submitting || !value.trim()}
             onClick={() => onRetrySubmit(item, value)}
           >
-            {submitting ? "Retrying..." : "Retry"}
+            {submitting ? t("ui.retrying") : t("graph.retry")}
           </Button>
         </div>
       )}
@@ -169,11 +170,11 @@ function WrongAnswerRow({
             ) : (
               <AlertTriangle className="size-4 text-warning-foreground" />
             )}
-            <span>{feedback.is_correct ? "Correct on retry" : "Still needs work"}</span>
+            <span>{feedback.is_correct ? t("ui.correct_on_retry") : t("ui.still_needs_work")}</span>
           </div>
           {feedback.correct_answer ? (
             <p className="text-sm text-muted-foreground">
-              Correct answer: <span className="text-foreground">{feedback.correct_answer}</span>
+              {t("wrongAnswer.correctAnswer")}：<span className="text-foreground">{feedback.correct_answer}</span>
             </p>
           ) : null}
           {feedback.explanation ? (
@@ -254,10 +255,10 @@ export function WrongAnswersView({ courseId }: WrongAnswersViewProps) {
       }));
 
       if (result.is_correct) {
-        toast.success("Wrong answer cleared");
+        toast.success(t("ui.wrong_cleared"));
         await loadWrongAnswers();
       } else {
-        toast.error("Still incorrect. Review the explanation and try again.");
+        toast.error(t("ui.still_incorrect"));
       }
     } catch (error) {
       setRetryStateById((prev) => ({
@@ -268,7 +269,7 @@ export function WrongAnswersView({ courseId }: WrongAnswersViewProps) {
           feedback: prev[item.id]?.feedback ?? null,
         },
       }));
-      toast.error((error as Error).message || "Retry failed");
+      toast.error((error as Error).message || t("ui.retry_failed"));
     }
   }, [loadWrongAnswers]);
 
@@ -288,9 +289,9 @@ export function WrongAnswersView({ courseId }: WrongAnswersViewProps) {
       >
         <CheckCircle2 className="size-10 text-success" />
         <div>
-          <p className="text-sm font-medium">No active wrong answers</p>
+          <p className="text-sm font-medium">{t("ui.no_active_wrong_answers")}</p>
           <p className="text-xs text-muted-foreground">
-            New misses will show up here for quick retry and cleanup.
+            做错的题目会显示在这里，方便你重新练习并清理。
           </p>
         </div>
       </div>
@@ -300,33 +301,33 @@ export function WrongAnswersView({ courseId }: WrongAnswersViewProps) {
   return (
     <div
       role="region"
-      aria-label="Wrong answers"
+      aria-label={t("ui.wrong_answers")}
       className="flex-1 flex flex-col overflow-hidden"
       data-testid="wrong-answers-panel"
     >
       <div className="border-b border-border/60 px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <RotateCcw className="size-4 text-warning-foreground" />
-          <span>Wrong Answers</span>
+          <span>{t("ui.wrong_answers_1")}</span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Retry recent mistakes directly here before they harden into habits.
+          {t("wrongAnswer.description")}
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin p-4 pr-3 space-y-4">
         {stats ? (
           <div className="grid gap-2 sm:grid-cols-3">
             <div className="rounded-2xl card-shadow bg-card p-3">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Active</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("ui.active")}</p>
               <p className="mt-1 text-xl font-semibold tabular-nums">{stats.unmastered}</p>
             </div>
             <div className="rounded-2xl card-shadow bg-card p-3">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Mastered</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("ui.mastered")}</p>
               <p className="mt-1 text-xl font-semibold tabular-nums">{stats.mastered}</p>
             </div>
             <div className="rounded-2xl card-shadow bg-card p-3">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">All logged</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("ui.all_logged")}</p>
               <p className="mt-1 text-xl font-semibold tabular-nums">{stats.total}</p>
             </div>
           </div>

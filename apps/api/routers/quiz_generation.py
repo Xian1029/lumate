@@ -1,6 +1,7 @@
 """Quiz generation endpoints: extract questions and save generated sets."""
 
 import logging
+from difflib import SequenceMatcher
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,17 @@ from schemas.quiz import (
 )
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.content_text import is_assessment_content
 from services.llm.readiness import ensure_llm_ready
-from services.parser.quiz import QuizExtractionOutcome, QuizNodeFailure, extract_questions, prepare_generated_questions
-from services.practice.annotation import build_practice_problem
+from services.parser.quiz import (
+    QuizExtractionOutcome,
+    QuizNodeFailure,
+    cap_question_batch,
+    extract_questions,
+    prepare_generated_questions,
+)
+from services.practice.annotation import build_practice_problem, build_question_dedupe_key
+from services.practice.curriculum_blueprint import build_question_blueprint
 from sqlalchemy.exc import SQLAlchemyError
 
 from libs.exceptions import (
@@ -35,6 +44,28 @@ from libs.exceptions import (
 )
 
 router = APIRouter()
+
+
+def _quiz_source_for_node(node: CourseContentTree, note_by_node: dict[str, str]) -> str | None:
+    """Choose the learner-visible material used by focused quiz generation.
+
+    Imported PDFs can produce structural nodes whose raw ``content`` is empty,
+    while the generated Markdown note contains the complete section. Treating
+    only the raw field as authoritative caused valid unit pages to fail with
+    "Content node not found or empty".
+    """
+    note = str(note_by_node.get(str(node.id)) or "").strip()
+    raw_content = str(node.content or "").strip()
+    source = note or raw_content
+    if not is_assessment_content(
+        node.title,
+        source,
+        content_category=node.content_category,
+        # Explicit unit navigation may legitimately point at a legacy level-0
+        # node. Its note/raw source has already passed the body-content checks.
+    ):
+        return None
+    return source
 
 
 @router.get("/{course_id}/generated-batches", summary="List generated quiz batches", description="Return all AI-generated quiz batches for a course with version info.")
@@ -162,6 +193,10 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     outcome = QuizExtractionOutcome()
     failures: list[Exception] = []
     results: list[QuizExtractionOutcome] = []
+    from services.generated_assets import get_active_note_markdown_by_node
+    note_by_node = await get_active_note_markdown_by_node(
+        db, user_id=user.id, course_id=body.course_id,
+    )
     try:
         if body.content_node_id:
             result = await db.execute(
@@ -171,16 +206,52 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                 )
             )
             node = result.scalar_one_or_none()
-            if not node or not node.content:
+            if not node:
                 raise NotFoundError("Content node not found or empty")
 
+            # Focused practice must follow the exact AI note currently shown to
+            # the learner. Falling back to raw textbook pages can create a quiz
+            # that disagrees with the selected note or even another subsection.
+            source_material = str(note_by_node.get(str(node.id)) or "").strip()
+            if not source_material:
+                # Container nodes created from formatted PDFs may hold their
+                # lesson text in child sections. Reuse those child notes/text
+                # so the focused action remains useful instead of failing.
+                all_result = await db.execute(
+                    select(CourseContentTree)
+                    .where(CourseContentTree.course_id == body.course_id)
+                    .order_by(CourseContentTree.level, CourseContentTree.order_index)
+                )
+                all_nodes = list(all_result.scalars().all())
+                descendants: list[CourseContentTree] = []
+                descendant_ids = {node.id}
+                for candidate in all_nodes:
+                    if candidate.parent_id in descendant_ids:
+                        descendant_ids.add(candidate.id)
+                        candidate_source = str(note_by_node.get(str(candidate.id)) or "").strip()
+                        if candidate_source:
+                            descendants.append(candidate)
+                if descendants:
+                    source_material = "\n\n".join(
+                        f"## {candidate.title}\n{_quiz_source_for_node(candidate, note_by_node)}"
+                        for candidate in descendants[:4]
+                    )
+                else:
+                    raise NotFoundError("Content node not found or empty")
+
             outcome = await extract_questions(
-                node.content,
+                source_material,
                 node.title,
                 body.course_id,
                 body.content_node_id,
                 mode=body.mode,
                 difficulty=body.difficulty,
+                language=body.language,
+                knowledge_blueprint=await build_question_blueprint(
+                    db,
+                    course_id=body.course_id,
+                    content_node_id=body.content_node_id,
+                ),
             )
         else:
             import asyncio
@@ -198,9 +269,21 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
             nodes = result.scalars().all()
             eligible = [
                 n for n in nodes
-                if n.content and len(n.content) > 100
-                and n.content_category not in INFO_CATEGORIES
+                if is_assessment_content(
+                    n.title, n.content, content_category=n.content_category, level=n.level,
+                )
+                and note_by_node.get(str(n.id))
             ][:max_nodes]
+
+            # AsyncSession cannot safely execute concurrent queries. Build the
+            # graph-backed blueprint sequentially before parallel LLM calls.
+            blueprint_by_node: dict[uuid.UUID, str | None] = {}
+            for eligible_node in eligible:
+                blueprint_by_node[eligible_node.id] = await build_question_blueprint(
+                    db,
+                    course_id=body.course_id,
+                    content_node_id=eligible_node.id,
+                )
 
             sem = asyncio.Semaphore(3)
 
@@ -209,12 +292,14 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
                     try:
                         return await asyncio.wait_for(
                             extract_questions(
-                                n.content,
+                                note_by_node[str(n.id)],
                                 n.title,
                                 body.course_id,
                                 n.id,
                                 mode=body.mode,
                                 difficulty=body.difficulty,
+                                language=body.language,
+                                knowledge_blueprint=blueprint_by_node.get(n.id),
                             ),
                             timeout=60,
                         )
@@ -250,6 +335,56 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     except SQLAlchemyError as exc:
         reraise_as_app_error(exc, "Quiz extraction failed")
 
+    if body.avoid_existing and outcome.problems:
+        existing_result = await db.execute(
+            select(PracticeProblem.question).where(
+                PracticeProblem.course_id == body.course_id,
+                PracticeProblem.is_diagnostic == False,
+                PracticeProblem.is_archived == False,
+            )
+        )
+        existing_keys = [
+            build_question_dedupe_key(question)
+            for question in existing_result.scalars().all()
+            if question
+        ]
+        unique_problems: list[PracticeProblem] = []
+        skipped = 0
+        for problem in outcome.problems:
+            candidate = build_question_dedupe_key(problem.question)
+            is_duplicate = any(
+                candidate == existing
+                or SequenceMatcher(None, candidate, existing).ratio() >= 0.82
+                for existing in existing_keys
+                if candidate and existing
+            )
+            if is_duplicate:
+                skipped += 1
+                continue
+            unique_problems.append(problem)
+            existing_keys.append(candidate)
+        outcome.problems = unique_problems
+        outcome.discarded_count += skipped
+        if skipped:
+            outcome.warnings.append(f"Skipped {skipped} question(s) similar to earlier practice.")
+
+    # Multiple content nodes can each return a valid mini-set.  The response
+    # still represents one learner action, so cap the combined persisted set.
+    outcome.problems, capped, cap_warnings = cap_question_batch(
+        outcome.problems,
+        title="this practice set",
+    )
+    outcome.discarded_count += capped
+    outcome.warnings.extend(cap_warnings)
+
+    # Every extraction request is one learner-visible exercise set. Persisting
+    # a common batch id lets clients resume only unfinished sets and prevents a
+    # completed set from being mistaken for the learner's next practice session.
+    practice_batch_id = uuid.uuid4() if outcome.problems else None
+    if practice_batch_id:
+        for problem in outcome.problems:
+            problem.source_batch_id = practice_batch_id
+
     max_order_result = await db.execute(
         select(func.max(PracticeProblem.order_index)).where(
             PracticeProblem.course_id == body.course_id,
@@ -261,6 +396,17 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
     for index, problem in enumerate(outcome.problems, start=next_order):
         problem.order_index = index
         db.add(problem)
+    await db.flush()
+
+    # Every generated problem is indexed against the exact uploaded textbook
+    # section it came from. Existing practice behavior remains unchanged.
+    from services.question_catalog import catalog_practice_problem
+    for problem in outcome.problems:
+        await catalog_practice_problem(
+            db,
+            problem=problem,
+            course_id=body.course_id,
+        )
     await db.commit()
 
     warnings: list[str] = list(outcome.warnings)
@@ -298,6 +444,8 @@ async def extract_quiz(body: ExtractRequest, user: User = Depends(get_current_us
         "discarded_count": outcome.discarded_count,
         "node_failures": [failure.to_dict() for failure in outcome.node_failures],
         "warnings": warnings,
+        "problem_ids": [str(problem.id) for problem in outcome.problems],
+        "batch_id": str(practice_batch_id) if practice_batch_id else None,
     }
 
 

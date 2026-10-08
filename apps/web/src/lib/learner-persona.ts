@@ -110,10 +110,8 @@ export function getOptimalStudyWindows(): Array<{ dayOfWeek: number; hour: numbe
 export function formatStudyWindow(window: { dayOfWeek: number; hour: number }): string {
   // Use Intl for locale-aware day names when available
   let dayName: string;
+  const locale = getLocale();
   try {
-    const locale = typeof globalThis.localStorage !== "undefined"
-      ? localStorage.getItem("opentutor_locale") ?? "en"
-      : "en";
     // Create a date that falls on the target day of week (Jan 2023 starts on Sun)
     const refDate = new Date(2023, 0, 1 + window.dayOfWeek);
     dayName = refDate.toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US", { weekday: "short" });
@@ -122,7 +120,13 @@ export function formatStudyWindow(window: { dayOfWeek: number; hour: number }): 
     dayName = days[window.dayOfWeek];
   }
   const h = window.hour;
+  if (locale === "zh") {
+    const period = h < 6 ? "凌晨" : h < 12 ? "上午" : h < 18 ? "下午" : "晚上";
+    const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${dayName} ${period}${displayHour}点`;
+  }
   const period = h >= 12 ? "PM" : "AM";
   const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
   return `${dayName} ${displayHour}${period}`;
 }
+import { getLocale } from "./i18n";

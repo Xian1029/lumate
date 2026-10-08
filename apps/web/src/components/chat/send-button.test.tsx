@@ -8,7 +8,7 @@ describe("SendButton", () => {
       <SendButton isStreaming={false} canSend={true} onSend={vi.fn()} onStop={vi.fn()} />
     );
     expect(screen.getByTestId("chat-send")).toBeInTheDocument();
-    expect(screen.getByLabelText("Send message")).toBeInTheDocument();
+    expect(screen.getByLabelText("发送消息")).toBeInTheDocument();
   });
 
   it("renders stop button when streaming", () => {
@@ -16,7 +16,7 @@ describe("SendButton", () => {
       <SendButton isStreaming={true} canSend={false} onSend={vi.fn()} onStop={vi.fn()} />
     );
     expect(screen.getByTestId("chat-stop")).toBeInTheDocument();
-    expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
+    expect(screen.getByLabelText("停止生成")).toBeInTheDocument();
   });
 
   it("disables send button when canSend is false", () => {

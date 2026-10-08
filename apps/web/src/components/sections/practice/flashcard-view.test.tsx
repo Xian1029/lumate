@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { FlashcardView } from "./flashcard-view";
 
+let testLocale = "en";
+
 function freshCards() {
   return [
-    { id: "c1", front: "What is 2+2?", back: "4", interval: 1, ease_factor: 2.5, repetitions: 0 },
-    { id: "c2", front: "Capital of France?", back: "Paris", interval: 1, ease_factor: 2.5, repetitions: 0 },
+    { id: "c1", front: "What is 2+2?", back: "4", interval: 1, ease_factor: 2.5, repetitions: 0, content_node_id: "lesson-1" },
+    { id: "c2", front: "Capital of France?", back: "Paris", interval: 1, ease_factor: 2.5, repetitions: 0, content_node_id: "lesson-1" },
   ];
 }
 
@@ -24,13 +26,21 @@ vi.mock("@/lib/api/practice", () => ({
 vi.mock("@/lib/i18n-context", () => ({
   useT: () => (key: string) => key,
   useTF: () => (key: string) => key,
+  useLocale: () => ({ locale: testLocale, setLocale: vi.fn() }),
 }));
 
 vi.mock("@/store/workspace", () => ({
   useWorkspaceStore: Object.assign(
     (selector: (s: Record<string, unknown>) => unknown) =>
-      selector({ sectionRefreshKey: { practice: 0 }, spaceLayout: { mode: "self_paced" } }),
-    { getState: () => ({ sectionRefreshKey: { practice: 0 }, spaceLayout: { mode: "self_paced" } }) },
+      selector({ selectedNodeId: "lesson-1", sectionRefreshKey: { practice: 0 }, spaceLayout: { mode: "self_paced" } }),
+    {
+      getState: () => ({
+        selectedNodeId: "lesson-1",
+        sectionRefreshKey: { practice: 0, analytics: 0 },
+        spaceLayout: { mode: "self_paced" },
+        triggerRefresh: vi.fn(),
+      }),
+    },
   ),
 }));
 
@@ -46,14 +56,21 @@ vi.mock("@/components/shared/ai-feature-blocked", () => ({
   AiFeatureBlocked: () => <div data-testid="ai-blocked" />,
 }));
 
-vi.mock("./use-quiz-persistence", () => ({
-  useQuizPersistence: () => ({ save: vi.fn(), load: vi.fn().mockReturnValue(null), clear: vi.fn() }),
-  useFlashcardPersistence: () => ({ save: vi.fn(), load: vi.fn().mockReturnValue(null), clear: vi.fn() }),
-}));
+vi.mock("./use-quiz-persistence", () => {
+  const save = vi.fn();
+  const load = vi.fn().mockReturnValue(null);
+  const clear = vi.fn();
+  const subscribe = vi.fn().mockReturnValue(() => undefined);
+  return {
+    useQuizPersistence: () => ({ save, load, clear, subscribe }),
+    useFlashcardPersistence: () => ({ save, load, clear, subscribe }),
+  };
+});
 
 describe("FlashcardView", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    testLocale = "en";
     const api = await import("@/lib/api");
     const practice = await import("@/lib/api/practice");
     (api.getDueFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: freshCards(), due_count: 2 });
@@ -76,6 +93,29 @@ describe("FlashcardView", () => {
     render(<FlashcardView courseId="test-course" />);
     await waitFor(() => {
       expect(screen.getByText("What is 2+2?")).toBeInTheDocument();
+    });
+  });
+
+  it("hides English cards that only include a Chinese glossary term in Chinese mode", async () => {
+    testLocale = "zh";
+    const api = await import("@/lib/api");
+    const practice = await import("@/lib/api/practice");
+    const mixedLanguageCards = [{
+      id: "mixed",
+      front: "What are rational numbers (有理数)?",
+      back: "Rational numbers include positive and negative numbers.",
+      interval: 1,
+      ease_factor: 2.5,
+      repetitions: 0,
+    }];
+    (api.getDueFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: mixedLanguageCards, due_count: 1 });
+    (practice.getLectorOrderedFlashcards as ReturnType<typeof vi.fn>).mockResolvedValue({ cards: mixedLanguageCards, count: 1 });
+
+    render(<FlashcardView courseId="test-course" />);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/What are rational numbers/)).not.toBeInTheDocument();
+      expect(screen.getByText("flashcard.empty")).toBeInTheDocument();
     });
   });
 
@@ -112,9 +152,9 @@ describe("FlashcardView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
 
-    expect(screen.getByRole("button", { name: /Rate: flashcard\.again/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rate: flashcard\.good/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rate: flashcard\.easy/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /flashcard\.again/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /flashcard\.good/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /flashcard\.easy/ })).toBeInTheDocument();
   });
 
   it("advances to next card after rating", async () => {
@@ -123,7 +163,7 @@ describe("FlashcardView", () => {
     await waitFor(() => screen.getByText("What is 2+2?"));
 
     fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.good/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.good/ }));
 
     await waitFor(() => {
       expect(reviewFlashcard).toHaveBeenCalledWith(
@@ -136,6 +176,20 @@ describe("FlashcardView", () => {
     });
   });
 
+  it("only records one review when a rating is clicked twice quickly", async () => {
+    const { reviewFlashcard } = await import("@/lib/api");
+    render(<FlashcardView courseId="test-course" />);
+    await waitFor(() => screen.getByText("What is 2+2?"));
+
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
+    const easy = screen.getByRole("button", { name: /flashcard\.easy/ });
+    fireEvent.click(easy);
+    fireEvent.click(easy);
+
+    await waitFor(() => expect(screen.getByText("Capital of France?")).toBeInTheDocument());
+    expect(reviewFlashcard).toHaveBeenCalledTimes(1);
+  });
+
   it("shows completion message after all cards reviewed", async () => {
     const { reviewFlashcard } = await import("@/lib/api");
     (reviewFlashcard as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -145,13 +199,13 @@ describe("FlashcardView", () => {
 
     // Review first card
     fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.good/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.good/ }));
 
     await waitFor(() => screen.getByText("Capital of France?"));
 
     // Review second card
     fireEvent.click(screen.getByRole("button", { name: /flashcard\.ariaQuestion/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Rate: flashcard\.easy/ }));
+    fireEvent.click(screen.getByRole("button", { name: /flashcard\.easy/ }));
 
     await waitFor(() => {
       expect(screen.getByText(/flashcard\.allDone/)).toBeInTheDocument();

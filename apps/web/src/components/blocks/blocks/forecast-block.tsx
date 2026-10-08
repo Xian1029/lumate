@@ -1,9 +1,11 @@
 "use client";
 
+import { t, tf } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { TrendingUp, BarChart3 } from "lucide-react";
 import { getForgettingForecast, getCourseProgress } from "@/lib/api";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
+import { useWorkspaceStore } from "@/store/workspace";
 
 interface ForecastPrediction {
   content_node_id: string | null;
@@ -30,6 +32,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
   const [data, setData] = useState<ForecastData | null>(null);
   const [progress, setProgress] = useState<{ mastery_pct?: number; total_concepts?: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const analyticsRefreshKey = useWorkspaceStore((state) => state.sectionRefreshKey.analytics);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,12 +53,12 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [courseId]);
+  }, [courseId, analyticsRefreshKey]);
 
   if (loading) {
     return (
-      <div role="status" aria-live="polite" className="flex items-center justify-center h-32 text-sm text-muted-foreground animate-pulse">
-        Analyzing exam readiness...
+      <div role="status" aria-live="polite" className="flex items-center justify-center h-24 text-sm text-muted-foreground animate-pulse">
+        {t("ui.loading")}
       </div>
     );
   }
@@ -76,11 +79,23 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
     masteryPct >= 50 ? "text-warning" :
     "text-destructive";
 
+  const summaryKey = totalItems === 0
+    ? "forecast.summary.start"
+    : urgentCount > 0
+      ? "forecast.summary.reviewNow"
+      : warningCount > 0
+        ? "forecast.summary.reviewSoon"
+        : "forecast.summary.great";
+
   return (
-    <div role="region" aria-label="Exam readiness forecast" className="p-4 space-y-4">
+    <div role="region" aria-label={t("ui.trajectory_forecast")} className="p-4 space-y-3">
+      <div>
+        <p className="text-sm font-semibold text-foreground">{t("forecast.childTitle")}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t(summaryKey)}</p>
+      </div>
       {/* Readiness score */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-muted/30">
+        <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-muted/30">
           <TrendingUp className={`size-6 ${readinessColor}`} aria-hidden="true" />
         </div>
         <div>
@@ -88,7 +103,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
             <span className={readinessColor}>{Math.round(masteryPct)}%</span>
           </p>
           <p className="text-xs text-muted-foreground">
-            Retention Health · {okCount}/{totalItems} concepts on track
+            {t("forecast.memoryScore")} · {tf("forecast.rememberedCount", { count: okCount, total: totalItems })}
           </p>
         </div>
       </div>
@@ -98,17 +113,17 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
         <div className="flex gap-2 text-xs">
           {urgentCount > 0 && (
             <span className="rounded-full bg-destructive/10 text-destructive px-2.5 py-0.5 font-medium">
-              {urgentCount} urgent
+              {tf("forecast.reviewNowCount", { count: urgentCount })}
             </span>
           )}
           {warningCount > 0 && (
             <span className="rounded-full bg-warning/10 text-warning px-2.5 py-0.5 font-medium">
-              {warningCount} warning
+              {tf("forecast.reviewSoonCount", { count: warningCount })}
             </span>
           )}
           {okCount > 0 && (
             <span className="rounded-full bg-success/10 text-success px-2.5 py-0.5 font-medium">
-              {okCount} on track
+              {tf("forecast.rememberWellCount", { count: okCount })}
             </span>
           )}
         </div>
@@ -117,7 +132,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       {/* Progress bar */}
       <div
         role="progressbar"
-        aria-label={`Retention health: ${Math.round(masteryPct)} percent`}
+        aria-label={tf("forecast.memoryScoreAria", { percent: Math.round(masteryPct) })}
         className="w-full h-2 bg-muted/40 rounded-full overflow-hidden"
       >
         <div
@@ -132,10 +147,10 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
       {/* At-risk concepts */}
       {riskPredictions.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2">At-risk concepts</p>
-          <div className="space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground mb-2">{t("forecast.nextReviewTitle")}</p>
+          <div className="max-h-32 space-y-1.5 overflow-y-auto overscroll-contain pr-1 scrollbar-thin">
             {riskPredictions.slice(0, 5).map((p, i) => (
-              <div key={p.content_node_id ?? i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 p-3.5">
+              <div key={p.content_node_id ?? i} className="flex items-center gap-2 text-xs rounded-xl bg-muted/30 px-3 py-2.5">
                 <BarChart3 className={`size-3 shrink-0 ${p.urgency === "ok" ? "text-success" : p.urgency === "warning" ? "text-warning" : "text-destructive"}`} aria-hidden="true" />
                 <span className="text-foreground flex-1 truncate">{p.title}</span>
                 <span className="text-muted-foreground tabular-nums">{Math.round(p.current_retrievability * 100)}%</span>
@@ -147,7 +162,7 @@ export default function ForecastBlock({ courseId }: BlockComponentProps) {
 
       {totalItems === 0 && (
         <p className="text-xs text-muted-foreground text-center">
-          Complete more practice to build your forecast.
+          {t("forecast.needPractice")}
         </p>
       )}
     </div>

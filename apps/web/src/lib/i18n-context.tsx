@@ -13,7 +13,7 @@ interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
+  const [locale, setLocaleState] = useState<Locale>("zh");
 
   useEffect(() => {
     initLocale();
@@ -39,9 +39,12 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     [locale],
   );
 
+  // Some older screens call the raw `t()` helper rather than subscribing to this
+  // context. Remounting this presentation boundary makes those screens evaluate
+  // their copy again, without changing any persisted workspace or course state.
   return (
     <I18nContext.Provider value={{ locale, setLocale, t, tf }}>
-      {children}
+      <div key={locale}>{children}</div>
     </I18nContext.Provider>
   );
 }

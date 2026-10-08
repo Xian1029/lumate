@@ -123,6 +123,22 @@ class IngestionError(AppError):
         super().__init__(detail)
 
 
+def public_ingestion_message(internal_message: str | None) -> str:
+    """Map parser diagnostics to a safe learner-facing message.
+
+    The original exception remains available in server logs and the ingestion
+    record for debugging, but must never be returned verbatim by an API.
+    """
+    message = (internal_message or "").lower()
+    if "unreadable_pages" in message or "pdf pages could not be read" in message:
+        return "教材中有页面无法读取，请重新上传原文件，或换一份清晰完整的文件。"
+    if "outline coverage is incomplete" in message or "missing sections" in message:
+        return "教材目录解析不完整，请重新上传原文件，或换一份完整版本。"
+    if "no content could be extracted" in message:
+        return "没有从文件中读取到可学习的内容，请检查文件是否完整或是否为扫描图片。"
+    return "教材暂时未能解析，请重新上传，或换一份 PDF、Word、PPT 文件。"
+
+
 class ToolExecutionError(AppError):
     """Raised when an agent tool fails during execution."""
     code = "tool_execution_error"

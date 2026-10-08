@@ -27,8 +27,6 @@ interface ContentStepProps {
   quickStartLoading: boolean;
   onStartLearning: () => void;
   onSkip: () => void;
-  onTryDemo: () => void;
-  demoLoading: boolean;
   t: (key: string) => string;
 }
 
@@ -38,7 +36,7 @@ export function ContentStep({
   url, onUrlChange, urlError, onValidateUrl,
   autoScrape, onAutoScrapeChange,
   isCanvasDetected, canvasSessionValid, canvasAuthenticating,
-  onAuthCanvas, onQuickStart, quickStartLoading, onStartLearning, onSkip, onTryDemo, demoLoading, t,
+  onAuthCanvas, onQuickStart, quickStartLoading, onStartLearning, onSkip, t,
 }: ContentStepProps) {
   const [tab, setTab] = useState<ContentTab>("upload");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,59 +236,43 @@ export function ContentStep({
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-3 pt-2">
+      {/* Actions: each choice states both the action and its outcome. */}
+      <div className="grid gap-2 pt-2 sm:grid-cols-3">
         <button
           type="button"
           onClick={onQuickStart}
           disabled={!canStart || quickStartLoading}
           data-testid="setup-quick-start"
-          className={`h-10 px-6 rounded-lg text-sm font-semibold text-brand-foreground ${
-            canStart && !quickStartLoading ? "bg-brand hover:opacity-90" : "bg-brand/50 cursor-not-allowed"
+          className={`min-h-20 rounded-xl border p-3 text-left transition-colors ${
+            canStart && !quickStartLoading
+              ? "border-brand bg-brand text-brand-foreground hover:opacity-90"
+              : "cursor-not-allowed border-border bg-muted/50 text-muted-foreground opacity-60"
           }`}
         >
-          {quickStartLoading ? t("setup.quickStartLoading") : t("setup.quickStart")}
+          <span className="block text-sm font-semibold">
+            {quickStartLoading ? t("setup.quickStartLoading") : t("setup.quickStart")}
+          </span>
+          <span className="mt-1 block text-xs leading-5 opacity-80">{t("setup.quickStartHint")}</span>
         </button>
         <button
           type="button"
           onClick={onStartLearning}
           disabled={!canStart || quickStartLoading}
           data-testid="setup-start-learning"
-          className="h-10 px-4 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+          className="min-h-20 rounded-xl border border-border bg-background p-3 text-left transition-colors hover:border-brand/50 hover:bg-brand-muted/30 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {t("setup.startLearning")}
+          <span className="block text-sm font-semibold text-foreground">{t("setup.startLearning")}</span>
+          <span className="mt-1 block text-xs leading-5 text-muted-foreground">{t("setup.startLearningHint")}</span>
         </button>
         <button
           type="button"
           onClick={onSkip}
-          className="h-10 px-4 text-sm text-muted-foreground hover:text-foreground"
+          className="min-h-20 rounded-xl border border-border bg-background p-3 text-left transition-colors hover:border-brand/50 hover:bg-muted/40"
         >
-          {t("setup.skipContent")}
+          <span className="block text-sm font-semibold text-foreground">{t("setup.skipContent")}</span>
+          <span className="mt-1 block text-xs leading-5 text-muted-foreground">{t("setup.skipContentHint")}</span>
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        {t("setup.quickStartHint")}
-      </p>
-
-      {/* Demo fast path */}
-      <div className="flex items-center gap-3 pt-1">
-        <div className="h-px flex-1 bg-border" />
-        <span className="text-xs text-muted-foreground">{t("setup.orTryDemo")}</span>
-        <div className="h-px flex-1 bg-border" />
-      </div>
-      <button
-        type="button"
-        onClick={onTryDemo}
-        disabled={demoLoading}
-        data-testid="setup-try-demo"
-        className={`h-10 w-full rounded-lg text-sm font-medium border transition-colors ${
-          demoLoading
-            ? "border-border bg-muted text-muted-foreground cursor-wait"
-            : "border-brand/30 bg-brand-muted text-brand hover:bg-brand/10"
-        }`}
-      >
-        {demoLoading ? t("setup.loadingDemo") : t("setup.tryWithSample")}
-      </button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useRef, useCallback, useState, type ChangeEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { uploadFile } from "@/lib/api";
@@ -53,8 +54,8 @@ export function AttachmentButtons({
           successCount++;
         } catch (err: unknown) {
           const msg =
-            err instanceof Error ? err.message : "Upload failed";
-          toast.error(`Failed to upload ${file.name}: ${msg}`);
+            err instanceof Error ? err.message : t("ui.upload_failed");
+          toast.error(`上传 ${file.name} 失败：${msg}`);
         }
       }
 
@@ -81,7 +82,7 @@ export function AttachmentButtons({
         accept={ACCEPTED_FILE_TYPES}
         multiple
         className="hidden"
-        aria-label="Upload files"
+        aria-label={t("ui.upload_files")}
         onChange={(e) => void handleFileChange(e)}
       />
 
@@ -91,8 +92,8 @@ export function AttachmentButtons({
         variant="ghost"
         size="icon-xs"
         className="mb-0.5 text-muted-foreground hover:text-foreground"
-        title="Attach file"
-        aria-label="Upload files"
+        title={t("ui.attach_file")}
+        aria-label={t("ui.upload_files")}
         disabled={disabled || isBusy}
         onClick={handleFileClick}
       >
@@ -112,8 +113,8 @@ export function AttachmentButtons({
           "mb-0.5 text-muted-foreground hover:text-foreground",
           pendingImageCount > 0 && "text-primary",
         )}
-        title="Attach image"
-        aria-label="Attach images"
+        title={t("ui.attach_image")}
+        aria-label={t("ui.attach_images")}
         disabled={disabled || isBusy || pendingImageCount >= MAX_IMAGES}
         onClick={onImageClick}
       >

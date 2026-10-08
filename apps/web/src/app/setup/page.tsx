@@ -18,12 +18,15 @@ function SetupInner() {
       <div className="w-full max-w-xl flex flex-col gap-8 animate-fade-in">
         {/* Header */}
         <div className="flex flex-col items-center gap-4">
-          <div className="size-14 rounded-2xl bg-brand flex items-center justify-center shadow-md">
-            <svg className="size-7 text-brand-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-            </svg>
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-brand text-2xl font-black text-brand-foreground shadow-md">
+            {s.t("brand.mark")}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">OpenTutor</h1>
+          <div className="text-center">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">{s.t("brand.name")}</h1>
+            {s.t("brand.name") !== "Lumate" && (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Lumate</p>
+            )}
+          </div>
           <SetupProgress currentStep={s.step} t={s.t} />
         </div>
 
@@ -72,8 +75,6 @@ function SetupInner() {
               quickStartLoading={s.quickStartLoading}
               onStartLearning={s.startLearning}
               onSkip={s.skipContent}
-              onTryDemo={s.tryDemo}
-              demoLoading={s.demoLoading}
               t={s.t}
             />
           )}

@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@/test-utils";
 import { ChatInput } from "./chat-input";
@@ -39,7 +40,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/i18n-context", () => ({
-  useT: () => (key: string) => key,
+  useT: () => (key: string) => t(key),
 }));
 
 vi.mock("@/components/chat/use-image-attachments", () => ({
@@ -81,14 +82,14 @@ describe("ChatInput", () => {
 
   it("renders textarea with correct aria-label", () => {
     render(<ChatInput courseId="test-course" />);
-    const textarea = screen.getByLabelText("Message input");
+    const textarea = screen.getByLabelText("消息输入框");
     expect(textarea).toBeInTheDocument();
     expect(textarea.tagName).toBe("TEXTAREA");
   });
 
   it("renders placeholder text when empty", () => {
     render(<ChatInput courseId="test-course" />);
-    const textarea = screen.getByPlaceholderText("Ask anything...");
+    const textarea = screen.getByPlaceholderText("随便问点什么……");
     expect(textarea).toBeInTheDocument();
   });
 
@@ -116,7 +117,7 @@ describe("ChatInput", () => {
 
   it("shows disabled placeholder when disabled", () => {
     render(<ChatInput courseId="test-course" disabled />);
-    const textarea = screen.getByPlaceholderText("chat.disabledNeedLlm");
+    const textarea = screen.getByPlaceholderText("请先在设置里连接真实 LLM，再使用聊天。");
     expect(textarea).toBeInTheDocument();
   });
 

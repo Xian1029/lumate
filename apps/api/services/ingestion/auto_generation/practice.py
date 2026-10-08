@@ -33,7 +33,7 @@ async def auto_generate_flashcards(
 
         try:
             from services.spaced_repetition.flashcards import generate_flashcards
-            cards = await generate_flashcards(db, course_id, None, count)
+            cards = await generate_flashcards(db, course_id, None, count, user_id=user_id)
             if not cards:
                 return 0
 
@@ -60,14 +60,21 @@ async def auto_generate_flashcards(
 async def auto_generate_quiz(
     db_factory,
     course_id: uuid.UUID,
-    question_count: int = 3,
+    user_id: uuid.UUID,
+    question_count: int = 6,
 ) -> int:
     """Auto-generate quiz questions for a course after ingestion.
 
-    Dedup guard: skips if the course already has >=3 active quiz questions.
+    Dedup guard: skips if the course already has enough starter questions.
     """
-    from models.content import CourseContentTree, INFO_CATEGORIES
+    from models.content import CourseContentTree
     from models.practice import PracticeProblem
+    from services.content_text import is_assessment_content
+    from services.parser.quiz import MAX_GENERATED_QUESTIONS
+
+    # This background path is still one generation event. Do not let a caller
+    # turn initial course preparation into an overwhelming question dump.
+    question_count = min(max(1, question_count), MAX_GENERATED_QUESTIONS)
 
     async with db_factory() as db:
         # Dedup guard -- skip if enough quiz questions already exist
@@ -78,7 +85,7 @@ async def auto_generate_quiz(
                 PracticeProblem.is_archived == False,  # noqa: E712
             )
         )).scalar() or 0
-        if existing_count >= 3:
+        if existing_count >= question_count:
             logger.info("Skipping auto-quiz: %d questions already exist for course %s", existing_count, course_id)
             return 0
 
@@ -93,15 +100,26 @@ async def auto_generate_quiz(
                 )
             )
             nodes = result.scalars().all()
+            from services.generated_assets import get_active_note_markdown_by_node
+            note_by_node = await get_active_note_markdown_by_node(
+                db, user_id=user_id, course_id=course_id,
+            )
 
             problems: list[PracticeProblem] = []
-            for node in nodes[:3]:
-                if (node.content and len(node.content) > 100
-                        and node.content_category not in INFO_CATEGORIES):
-                    node_problems = await extract_questions(
-                        node.content, node.title, course_id, node.id,
-                    )
-                    problems.extend(node_problems)
+            for node in nodes:
+                if is_assessment_content(
+                    node.title, node.content, content_category=node.content_category, level=node.level,
+                ):
+                    note = note_by_node.get(str(node.id))
+                    if not note:
+                        continue
+                    outcome = await extract_questions(note, node.title, course_id, node.id)
+                    # ``extract_questions`` returns a structured outcome so
+                    # callers can report discarded/repaired questions.  The
+                    # old list contract survived here and made successful
+                    # workspace preparation fail with "object is not
+                    # iterable" after a textbook had already been parsed.
+                    problems.extend(outcome.problems)
                     if len(problems) >= question_count:
                         break
 
@@ -131,22 +149,42 @@ async def _auto_generate_learning_content(
     Runs as a fire-and-forget task after content tree creation.
     Only processes nodes with >300 chars of content.
     """
-    eligible = [n for n in nodes if n.content and len(n.content) > 300]
+    from services.content_text import is_assessment_content
+    eligible = [
+        n for n in nodes
+        if is_assessment_content(
+            n.title, n.content, content_category=n.content_category, level=n.level,
+        ) and len(n.content or "") > 300
+    ]
     if not eligible:
         return
 
-    from services.parser.quiz import extract_questions
+    from services.parser.quiz import MAX_GENERATED_QUESTIONS, extract_questions
 
+    generated_count = 0
     for node in eligible[:20]:  # Cap to avoid excessive processing
+        if generated_count >= MAX_GENERATED_QUESTIONS:
+            break
         try:
             if not node.content or len(node.content) <= 300:
                 continue
-            outcome = await extract_questions(node.content, node.title, course_id, node.id)
-            for problem in outcome.problems[:3]:
+            # Practice must be derived from the learner-facing note, so notes,
+            # quizzes and flashcards share one canonical scope.
+            from services.generated_assets import get_active_note_markdown_by_node
+            note_by_node = await get_active_note_markdown_by_node(
+                db, user_id=user_id, course_id=course_id,
+            )
+            note = note_by_node.get(str(node.id))
+            if not note:
+                continue
+            outcome = await extract_questions(note, node.title, course_id, node.id)
+            remaining = MAX_GENERATED_QUESTIONS - generated_count
+            for problem in outcome.problems[:min(3, remaining)]:
                 problem.source = "ai_generated"
                 problem.source_owner = "ai"
                 problem.locked = False
                 db.add(problem)
+                generated_count += 1
 
         except (ConnectionError, TimeoutError) as e:
             logger.warning("Auto-generate learning content network error for '%s': %s", node.title, e)

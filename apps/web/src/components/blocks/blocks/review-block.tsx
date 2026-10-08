@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { RotateCcw, ArrowRight } from "lucide-react";
@@ -33,7 +34,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
     return (
       <div role="status" aria-live="polite" className="flex items-center justify-center py-8 text-xs text-muted-foreground">
         <RotateCcw className="size-3.5 animate-spin mr-2" />
-        Loading review...
+        {t("review.loading")}
       </div>
     );
   }
@@ -41,7 +42,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
   if (items.length === 0) {
     return (
       <div className="text-center py-8 text-xs text-muted-foreground">
-        No concepts to review right now. You&apos;re all caught up!
+        {t("review.noItemsEncouragement")}
       </div>
     );
   }
@@ -49,7 +50,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
   const topItems = items.slice(0, 3);
 
   return (
-    <div role="list" aria-label="Concepts to review" className="space-y-2 p-1">
+    <div role="list" aria-label={t("ui.concepts_to_review")} className="space-y-2 p-1">
       {topItems.map((item) => (
         <div
           key={item.concept_id}
@@ -61,7 +62,7 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
               {item.concept_label}
             </p>
             <p className="text-xs text-muted-foreground">
-              Mastery: <span className="tabular-nums">{Math.round(item.mastery * 100)}%</span>
+              {t("ui.mastery")}：<span className="tabular-nums">{Math.round(item.mastery * 100)}%</span>
             </p>
           </div>
           <span
@@ -69,23 +70,23 @@ export default function ReviewBlock({ courseId }: BlockComponentProps) {
               URGENCY_COLORS[item.urgency] ?? URGENCY_COLORS.default
             }`}
           >
-            {item.urgency}
+            {t(`review.urgency.${item.urgency}`)}
           </span>
         </div>
       ))}
 
       {items.length > 3 && (
         <p className="text-[10px] text-muted-foreground text-center">
-          +{items.length - 3} more to review
+          {t("review.moreItems").replace("{count}", String(items.length - 3))}
         </p>
       )}
 
       <Link
         href={`/course/${courseId}/review`}
-        aria-label="Start full review session"
+        aria-label={t("ui.start_full_review_session")}
         className="flex items-center justify-center gap-1.5 w-full py-2.5 text-sm font-medium text-brand-foreground bg-brand rounded-xl hover:opacity-90 transition-opacity"
       >
-        Start Full Review
+        {t("review.startFull")}
         <ArrowRight className="size-3.5" />
       </Link>
     </div>

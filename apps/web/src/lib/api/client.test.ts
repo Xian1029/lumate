@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { request, requestBlob, ApiError, parseApiError, API_BASE } from "./client";
 
@@ -31,7 +32,10 @@ describe("parseApiError", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
     expect(err.code).toBe("not_found");
-    expect(err.message).toBe("Not found");
+    // The user-facing message is localized; the raw technical detail is kept
+    // separately for logs.
+    expect(err.detail).toBe("Not found");
+    expect(err.message).toBe("内容不存在或已被删除，请返回重试。");
   });
 
   it("handles non-JSON error response", async () => {
@@ -41,7 +45,7 @@ describe("parseApiError", () => {
     });
     const err = await parseApiError(res);
     expect(err.status).toBe(500);
-    expect(err.message).toBe("Internal Server Error");
+    expect(err.message).toBe("服务暂时不可用，请稍后重试。");
   });
 });
 
@@ -85,6 +89,15 @@ describe("request", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not amplify rate limits with automatic retries", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse({ detail: "Rate limit exceeded" }, 429),
+    );
+
+    await expect(request("/courses")).rejects.toMatchObject({ status: 429 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("retries on 5xx errors", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse({ detail: "Server error" }, 500))
@@ -99,7 +112,7 @@ describe("request", () => {
 
   it("retries on network errors (TypeError)", async () => {
     mockFetch
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockRejectedValueOnce(new TypeError(t("ui.failed_to_fetch")))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
     const promise = request<{ ok: boolean }>("/health");

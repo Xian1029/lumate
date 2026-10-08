@@ -304,6 +304,29 @@ class TestRateLimitMiddleware:
             resp = await client.post("/api/chat/")
         assert resp.status_code == 429
 
+    @pytest.mark.asyncio
+    async def test_local_single_user_reads_do_not_consume_rate_budget(self):
+        from middleware.security import RateLimitMiddleware
+
+        app = _make_app([(
+            RateLimitMiddleware,
+            {
+                "default_rpm": 1,
+                "llm_rpm": 1,
+                "exempt_local_reads": True,
+            },
+        )])
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for _ in range(10):
+                resp = await client.get("/api/courses")
+            assert resp.status_code == 200
+
+            await client.post("/api/chat/")
+            resp = await client.post("/api/chat/")
+            assert resp.status_code == 429
+
 
 # ---------------------------------------------------------------------------
 # IP Extraction Tests

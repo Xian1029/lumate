@@ -89,9 +89,40 @@ async def list_generated_asset_batches(
                 "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
                 "asset_count": 0,
                 "preview": asset.content,
+                "metadata": asset.metadata_ or {},
             }
             batch = batches[batch_id]
         if asset.version == batch["current_version"]:
             batch["asset_count"] += 1
             batch["is_active"] = batch["is_active"] or (not asset.is_archived)
     return sorted(batches.values(), key=lambda item: (item["is_active"], item["updated_at"] or ""), reverse=True)
+
+
+async def get_active_note_markdown_by_node(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+) -> dict[str, str]:
+    """Return the newest saved AI note for each source content node."""
+    result = await db.execute(
+        select(GeneratedAsset)
+        .where(
+            GeneratedAsset.user_id == user_id,
+            GeneratedAsset.course_id == course_id,
+            GeneratedAsset.asset_type == "notes",
+            GeneratedAsset.is_archived == False,  # noqa: E712
+        )
+        .order_by(GeneratedAsset.version.desc(), GeneratedAsset.updated_at.desc())
+    )
+    notes: dict[str, str] = {}
+    for asset in result.scalars().all():
+        node_id = str((asset.metadata_ or {}).get("source_node_id") or "")
+        # Notes may have been stored before generated-note sanitization was
+        # introduced.  Normalize at this read boundary as well so downstream
+        # flashcard/question generation never consumes broken Markdown.
+        from services.parser.notes import normalize_generated_markdown
+        markdown = normalize_generated_markdown((asset.content or {}).get("markdown"))
+        if node_id and markdown and node_id not in notes:
+            notes[node_id] = markdown
+    return notes

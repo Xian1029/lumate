@@ -1,22 +1,48 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import Image from "next/image";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/store/chat";
 import { ActionCard } from "@/components/chat/action-card";
 import { Badge } from "@/components/ui/badge";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { BookOpen, ChevronDown } from "lucide-react";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+}
+
+function compactEvidenceLabels(groups: { label?: string; matched_facets?: string[]; matched_terms?: string[] }[]): string[] {
+  const labels: string[] = [];
+  for (const group of groups) {
+    for (const raw of [group.label, ...(group.matched_facets ?? []), ...(group.matched_terms ?? [])]) {
+      if (!raw) continue;
+      for (const label of raw.split(/\s+/).filter((item) => item.length >= 2).sort((a, b) => b.length - a.length)) {
+        if (labels.some((existing) => existing.includes(label))) continue;
+        const withoutShorter = labels.filter((existing) => !label.includes(existing));
+        withoutShorter.push(label);
+        labels.splice(0, labels.length, ...withoutShorter);
+      }
+    }
+  }
+  return labels.slice(0, 6);
+}
+
+function cleanReferenceTitle(raw?: string): string {
+  if (!raw) return "课程资料";
+  const segments = raw.split(/\s*>\s*/);
+  const specific = segments.at(-1)?.trim();
+  if (specific && !/\.pdf$/i.test(specific)) return specific;
+  return raw.replace(/^【?\d+】?\s*/, "").replace(/\.pdf$/i, "").trim();
 }
 
 /**
  * Single message bubble.
  *
  * - User messages: right-aligned, chat-user colours.
- * - Assistant messages: left-aligned, chat-assistant colours with
- *   whitespace-pre-wrap (markdown renderer to be added later).
+ * - Assistant messages: left-aligned, safely rendered Markdown.
  * - Shows ActionCard components when metadata.actions is present.
  * - Displays attached images for user messages.
  * - Shows audio playback controls for voice responses.
@@ -24,25 +50,27 @@ interface MessageBubbleProps {
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const actions = message.metadata?.actions;
-  const verifier = message.metadata?.verifier;
-  const diagnostics = message.metadata?.verifier_diagnostics;
   const contentRefs = message.metadata?.provenance?.content_refs ?? [];
   const evidenceGroups = message.metadata?.provenance?.content_evidence_groups ?? [];
+  const evidenceLabels = compactEvidenceLabels(evidenceGroups);
   const images = message.images;
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
-
-  const requestCoverage = typeof diagnostics?.request_coverage === "number"
-    ? `${Math.round(diagnostics.request_coverage * 100)}%`
-    : null;
-  const evidenceCoverage = typeof diagnostics?.evidence_coverage === "number"
-    ? `${Math.round(diagnostics.evidence_coverage * 100)}%`
-    : null;
+  const displayContent = isUser
+    ? message.content
+    : message.content
+        .split(/(?:\n|^)\s*(?:#{1,3}\s*)?(?:\*{1,2})?(?:Sources?|来源)(?:\*{1,2})?\s*[:：](?:\*{1,2})?/i)[0]
+        .replace(/^Early stopping required\.?$/gim, t("chat.responseInterrupted"))
+        .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+        .trim();
+  const referenceLabel = t("chat.referenceMaterials") === "chat.referenceMaterials"
+    ? "参考资料"
+    : t("chat.referenceMaterials");
 
   return (
     <>
       <div
         role="article"
-        aria-label={isUser ? "Your message" : "Assistant message"}
+        aria-label={isUser ? t("ui.your_message") : t("ui.assistant_message")}
         className={cn("flex mb-2", isUser ? "justify-end" : "justify-start")}
         data-testid={isUser ? "chat-message-user" : "chat-message-assistant"}
         data-role={message.role}
@@ -62,7 +90,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 <button
                   key={`${img.filename ?? "img"}-${i}`}
                   type="button"
-                  aria-label={`Expand ${img.filename ?? `image ${i + 1}`}`}
+                  aria-label={`放大图片：${img.filename ?? `图片 ${i + 1}`}`}
                   className="rounded-md overflow-hidden border border-white/20 hover:opacity-80 transition-opacity"
                   onClick={() =>
                     setExpandedImage(`data:${img.media_type};base64,${img.data}`)
@@ -70,7 +98,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 >
                   <Image
                     src={`data:${img.media_type};base64,${img.data}`}
-                    alt={img.filename ?? `Image ${i + 1}`}
+                    alt={img.filename ?? `图片 ${i + 1}`}
                     width={80}
                     height={80}
                     unoptimized
@@ -82,8 +110,15 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
 
           {/* Message content */}
-          {message.content && message.content !== "(image)" ? (
-            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          {displayContent && displayContent !== "(image)" ? (
+            isUser ? (
+              <div className="whitespace-pre-wrap break-words">{displayContent}</div>
+            ) : (
+              <MarkdownRenderer
+                content={displayContent}
+                className="chat-markdown max-w-none break-words text-sm leading-7 [&_h1]:mt-1 [&_h1]:text-lg [&_h2]:mt-4 [&_h2]:text-base [&_p]:my-1.5 [&_ul]:my-2 [&_ol]:my-2 [&_pre]:my-2 [&_table]:text-xs"
+              />
+            )
           ) : !images?.length ? (
             <span className="text-xs italic opacity-60">...</span>
           ) : null}
@@ -96,94 +131,43 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                   key={`${action.action}-${i}`}
                   action={{
                     type: action.action,
-                    label: action.value ?? action.action,
-                    payload: action.extra ? { extra: action.extra } : undefined,
+                    label: action.action === "focus_topic"
+                      ? "查看相关知识点"
+                      : undefined,
+                    payload: {
+                      ...(action.extra ? { extra: action.extra } : {}),
+                      ...(action.action === "data_updated" && action.value ? { section: action.value } : {}),
+                      ...(action.action === "focus_topic" && action.value ? { nodeId: action.value } : {}),
+                    },
                   }}
                 />
               ))}
             </div>
           )}
 
-          {!isUser && (verifier || evidenceGroups.length > 0 || contentRefs.length > 0) && (
-            <details
-              className="mt-2 rounded-md bg-black/5 px-2 py-2 dark:bg-white/5"
-              open={verifier?.status === "failed"}
-            >
-              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 text-[11px] font-medium opacity-80">
-                <span>Why this answer</span>
-                {verifier ? (
-                  <Badge variant="outline" className="text-[10px]">
-                    {verifier.status}
-                  </Badge>
-                ) : null}
-                {requestCoverage ? <Badge variant="outline" className="text-[10px]">Request {requestCoverage}</Badge> : null}
-                {evidenceCoverage ? <Badge variant="outline" className="text-[10px]">Evidence {evidenceCoverage}</Badge> : null}
-                {evidenceGroups.length > 0 ? (
-                  <Badge variant="outline" className="text-[10px]">
-                    {evidenceGroups.length} evidence group{evidenceGroups.length > 1 ? "s" : ""}
-                  </Badge>
-                ) : null}
+          {!isUser && (evidenceGroups.length > 0 || contentRefs.length > 0) && (
+            <details className="group mt-3 overflow-hidden rounded-xl border border-brand/15 bg-card/70 shadow-sm">
+              <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-semibold text-brand hover:bg-brand/[0.05]">
+                <span className="flex size-7 items-center justify-center rounded-lg bg-brand/10"><BookOpen className="size-4" /></span>
+                <span>{referenceLabel}</span>
+                <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" />
               </summary>
 
-              <div className="mt-2 space-y-2">
-                {verifier && (
+              <div className="space-y-3 border-t border-brand/10 px-3 py-3">
+                {evidenceLabels.length > 0 ? (
                   <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] opacity-75">{verifier.code}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {evidenceLabels.map((label) => (
+                        <Badge key={label} variant="outline" className="text-[10px]">{label}</Badge>
+                      ))}
                     </div>
-                    <p className="text-[11px] opacity-75">{verifier.message}</p>
-                    {diagnostics?.request_overlap_terms?.length ? (
-                      <p className="text-[10px] opacity-70">
-                        Covered request terms: {diagnostics.request_overlap_terms.slice(0, 5).join(", ")}
-                      </p>
-                    ) : null}
-                    {diagnostics?.evidence_overlap_terms?.length ? (
-                      <p className="text-[10px] opacity-70">
-                        Used evidence: {diagnostics.evidence_overlap_terms.slice(0, 5).join(", ")}
-                      </p>
-                    ) : null}
                   </div>
-                )}
-
-                {evidenceGroups.length > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-medium uppercase tracking-wide opacity-60">Merged evidence</p>
-                    {evidenceGroups.map((group, index) => (
-                      <div key={`${group.label ?? "group"}-${index}`} className="rounded border border-black/10 px-2 py-1.5 text-[11px] dark:border-white/10">
-                        {group.label ? <p className="font-medium">{group.label}</p> : null}
-                        {group.summary ? <p className="mt-0.5 opacity-80">{group.summary}</p> : null}
-                        {group.titles?.length ? (
-                          <p className="mt-1 text-[10px] opacity-70">
-                            Sections: {group.titles.slice(0, 3).join(" · ")}
-                          </p>
-                        ) : null}
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {typeof group.section_count === "number" && group.section_count > 0 ? (
-                            <Badge variant="outline" className="text-[10px]">
-                              {group.section_count} linked hits
-                            </Badge>
-                          ) : null}
-                          {group.matched_facets?.slice(0, 2).map((facet) => (
-                            <Badge key={facet} variant="outline" className="text-[10px]">{facet}</Badge>
-                          ))}
-                          {(!group.matched_facets || group.matched_facets.length === 0) && group.matched_terms?.slice(0, 3).map((term) => (
-                            <Badge key={term} variant="outline" className="text-[10px]">{term}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : contentRefs.length > 0 ? (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-medium uppercase tracking-wide opacity-60">Evidence</p>
+                ) : null}
+                {contentRefs.length > 0 ? (
+                  <div className="space-y-2">
                     {contentRefs.slice(0, 2).map((ref, index) => (
-                      <div key={`${ref.title ?? "evidence"}-${index}`} className="rounded border border-black/10 px-2 py-1.5 text-[11px] dark:border-white/10">
-                        {ref.title ? <p className="font-medium">{ref.title}</p> : null}
-                        {ref.evidence_summary ? (
-                          <p className="mt-0.5 opacity-80">{ref.evidence_summary}</p>
-                        ) : ref.preview ? (
-                          <p className="mt-0.5 opacity-80">{ref.preview}</p>
-                        ) : null}
+                      <div key={`${ref.title ?? "evidence"}-${index}`} className="rounded-lg border border-brand/10 bg-background/80 px-3 py-2 text-xs">
+                        <p className="font-medium leading-5">{cleanReferenceTitle(ref.title)}</p>
                       </div>
                     ))}
                   </div>
@@ -201,12 +185,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           onClick={() => setExpandedImage(null)}
           onKeyDown={(e) => { if (e.key === "Escape") setExpandedImage(null); }}
           role="dialog"
-          aria-label="Expanded image view. Click or press Escape to close."
+          aria-label={t("ui.expanded_image_view_click_or_press_escape_to_close")}
           aria-modal="true"
         >
           <Image
             src={expandedImage}
-            alt="Expanded view"
+            alt={t("ui.expanded_view")}
             width={1440}
             height={1080}
             unoptimized
@@ -217,4 +201,3 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     </>
   );
 }
-

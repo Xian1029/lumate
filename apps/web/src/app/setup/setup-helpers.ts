@@ -70,8 +70,9 @@ function interviewLayoutToSpaceLayout(recommended: SpaceLayoutResponse): SpaceLa
     position: b.position,
     size: b.size as BlockInstance["size"],
     config: b.config,
-    visible: b.visible,
-    source: (b.source === "onboarding" ? "template" : b.source) as BlockInstance["source"],
+    isVisible: b.visible,
+    isPinned: false,
+    source: (b.source === "onboarding" ? "SYSTEM_OPTIONAL" : b.source) as BlockInstance["source"],
   }));
   return {
     templateId: recommended.templateId,

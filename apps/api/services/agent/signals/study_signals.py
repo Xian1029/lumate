@@ -54,6 +54,7 @@ async def _collect_active_goals(
         else:
             urgency = 60.0
 
+        meta = goal.metadata_json or {}
         signals.append(AgendaSignal(
             signal_type="active_goal",
             user_id=user_id,
@@ -66,6 +67,10 @@ async def _collect_active_goals(
                 "days_until_target": days_left,
                 "objective": goal.objective,
                 "has_next_action": bool(goal.next_action),
+                # Structured execution target captured when the plan task was
+                # written — lets the home CTA deep-link without parsing text.
+                "content_node_id": meta.get("content_node_id"),
+                "action_href": meta.get("action_href"),
             },
         ))
     return signals
@@ -181,7 +186,7 @@ async def _collect_forgetting_risk(
             user_id=user_id,
             course_id=cid,
             entity_id=f"fsrs:{cid or 'all'}",
-            title=f"{overdue_count} items overdue (cost={forgetting_cost:.1f})",
+            title=f"{overdue_count} 个内容到期未复习",
             urgency=urgency,
             detail={
                 "overdue_count": overdue_count,
@@ -232,7 +237,7 @@ async def _collect_lector_review(
         user_id=user_id,
         course_id=course_id,
         entity_id=f"lector:{course_id}",
-        title=f"{len(urgent)} concepts need semantic review",
+        title=f"{len(urgent)} 个知识点需要复习巩固",
         urgency=urgency,
         detail={
             "urgent_count": len(urgent),
@@ -279,7 +284,7 @@ async def _collect_prerequisite_gaps(
             user_id=user_id,
             course_id=course_id,
             entity_id=gap["concept_id"],
-            title=f"Prerequisite gap: {gap['concept']} (mastery {gap['mastery']:.0%})",
+            title=f"前置知识需补学：{gap['concept']}（掌握度 {gap['mastery']:.0%}）",
             urgency=urgency,
             detail={
                 "concept": gap["concept"],

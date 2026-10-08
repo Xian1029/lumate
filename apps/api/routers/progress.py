@@ -1,18 +1,24 @@
 """Progress tracking — core progress endpoints (CRUD, overview)."""
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.course import Course
-from models.ingestion import StudySession, WrongAnswer
+from models.content import CourseContentTree
+from models.ingestion import StudySession, StudySessionHeartbeat, WrongAnswer
 from models.practice import PracticeProblem
 from models.progress import LearningProgress
 from models.user import User
 from services.auth.dependency import get_current_user
+from services.course_access import get_course_or_404
+from services.learning_progress import NON_LEARNING_CATEGORIES
+from services.content_text import is_body_content
 
 from routers.progress_analytics import router as analytics_router
 from routers.progress_knowledge import router as knowledge_router
@@ -22,6 +28,133 @@ router = APIRouter()
 # Include sub-routers so all endpoints remain under /api/progress
 router.include_router(analytics_router)
 router.include_router(knowledge_router)
+
+
+def _active_seconds(session: StudySession) -> int:
+    """Prefer focused seconds, while retaining pre-migration session history."""
+    if session.active_seconds:
+        return session.active_seconds
+    return (session.duration_minutes or 0) * 60
+
+
+class StudyHeartbeatRequest(BaseModel):
+    heartbeat_id: str = Field(min_length=8, max_length=64)
+    client_session_id: str = Field(min_length=8, max_length=64)
+    course_id: uuid.UUID
+    content_node_id: uuid.UUID | None = None
+    target_module: str | None = Field(default=None, max_length=30)
+    active_seconds: int = Field(ge=0, le=120)
+    elapsed_seconds: int = Field(ge=0, le=300)
+    last_activity_at: datetime | None = None
+    activity_breakdown: dict[str, int] = Field(default_factory=dict)
+    ended: bool = False
+
+
+@router.post("/study-sessions/heartbeat", summary="Record effective study time")
+async def record_study_heartbeat(
+    body: StudyHeartbeatRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Idempotently add focused seconds from one active browser tab."""
+    await get_course_or_404(db, body.course_id, user_id=user.id)
+
+    duplicate = await db.get(StudySessionHeartbeat, body.heartbeat_id)
+    if duplicate:
+        session = await db.get(StudySession, duplicate.session_id)
+        return {
+            "session_id": str(duplicate.session_id),
+            "active_seconds": session.active_seconds if session else 0,
+            "duplicate": True,
+        }
+
+    content_node_id = body.content_node_id
+    if content_node_id:
+        node_result = await db.execute(
+            select(CourseContentTree).where(
+                CourseContentTree.id == content_node_id,
+                CourseContentTree.course_id == body.course_id,
+            )
+        )
+        node = node_result.scalar_one_or_none()
+        # Front matter/contents may be opened in the original textbook but
+        # must never become the student's LastLearningContext.
+        if (
+            node is None
+            or (node.content_category or "").lower() in NON_LEARNING_CATEGORIES
+            or not is_body_content(node.title, node.content or "学习内容")
+        ):
+            content_node_id = None
+
+    session_result = await db.execute(
+        select(StudySession).where(
+            StudySession.user_id == user.id,
+            StudySession.course_id == body.course_id,
+            StudySession.client_session_id == body.client_session_id,
+        )
+    )
+    session = session_result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if session is None:
+        session = StudySession(
+            user_id=user.id,
+            course_id=body.course_id,
+            content_node_id=content_node_id,
+            target_module=body.target_module,
+            client_session_id=body.client_session_id,
+            active_seconds=0,
+            elapsed_seconds=0,
+            status="active",
+            activity_breakdown={},
+        )
+        db.add(session)
+        await db.flush()
+
+    # One focused session is capped at two hours; a later visit receives a new
+    # client session after the inactivity gap.
+    remaining_active = max(0, 2 * 60 * 60 - (session.active_seconds or 0))
+    active_delta = min(body.active_seconds, body.elapsed_seconds, remaining_active)
+    session.active_seconds = (session.active_seconds or 0) + active_delta
+    session.elapsed_seconds = (session.elapsed_seconds or 0) + body.elapsed_seconds
+    session.duration_minutes = session.active_seconds // 60
+    session.last_activity_at = body.last_activity_at or now
+    session.content_node_id = content_node_id or session.content_node_id
+    # A course-level heartbeat may add time, but must not erase a more precise
+    # module captured by this session.
+    session.target_module = body.target_module or session.target_module
+
+    breakdown = dict(session.activity_breakdown or {})
+    unassigned = active_delta
+    for activity, seconds in body.activity_breakdown.items():
+        if activity not in {"reading", "notes", "practice", "review", "graph"}:
+            continue
+        assigned = max(0, min(int(seconds), unassigned))
+        breakdown[activity] = int(breakdown.get(activity, 0)) + assigned
+        unassigned -= assigned
+        if unassigned <= 0:
+            break
+    session.activity_breakdown = breakdown
+
+    if body.ended:
+        session.status = "completed"
+        session.ended_at = now
+    else:
+        session.status = "active"
+
+    db.add(
+        StudySessionHeartbeat(
+            id=body.heartbeat_id,
+            session_id=session.id,
+            active_seconds=active_delta,
+            elapsed_seconds=body.elapsed_seconds,
+        )
+    )
+    await db.commit()
+    return {
+        "session_id": str(session.id),
+        "active_seconds": session.active_seconds,
+        "duplicate": False,
+    }
 
 
 # ── Progress Endpoints ──
@@ -111,7 +244,7 @@ async def get_learning_overview(
 
     course_summaries = []
     all_mastery_scores = [row.mastery_score for row in progress_rows]
-    total_study_minutes = sum(session.duration_minutes or 0 for session in sessions)
+    total_study_minutes = sum(_active_seconds(session) for session in sessions) // 60
 
     for course in courses:
         course_progress = progress_by_course.get(course.id, [])
@@ -126,7 +259,7 @@ async def get_learning_overview(
                 "course_id": str(course.id),
                 "course_name": course.name,
                 "average_mastery": avg_mastery,
-                "study_minutes": sum(item.duration_minutes or 0 for item in course_sessions),
+                "study_minutes": sum(_active_seconds(item) for item in course_sessions) // 60,
                 "wrong_answers": len(course_wrong),
                 "diagnosed_count": sum(1 for item in course_wrong if item.diagnosis),
                 "gap_types": {

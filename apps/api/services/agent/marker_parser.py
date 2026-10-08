@@ -10,6 +10,10 @@ import re
 logger = logging.getLogger(__name__)
 
 _INCOMPLETE_MARKER_RE = re.compile(r"\[(TOOL_START|TOOL_DONE|ACTION):[^\]]*$")
+_NAKED_FOCUS_TOPIC_RE = re.compile(
+    r"(?<![\w\[])ACTION:focus_topic:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]?"
+)
+_INCOMPLETE_NAKED_ACTION_RE = re.compile(r"(?<![\w\[])ACTION:focus_topic:[^\s\]]*\]?")
 
 # ── Marker types for the shared parser ──
 _MARKER_TAGS = ("TOOL_START", "TOOL_DONE", "ACTION")
@@ -43,7 +47,12 @@ class MarkerParser:
         self._buffer = ""
 
     def _has_pending(self) -> bool:
-        return any(p in self._buffer for p in _MARKER_PREFIXES)
+        prefixes = (*_MARKER_PREFIXES, "ACTION:focus_topic:")
+        return any(
+            prefix in self._buffer
+            or any(self._buffer.endswith(prefix[:size]) for size in range(1, len(prefix)))
+            for prefix in prefixes
+        )
 
     def _parse_tool_marker(self, raw: str) -> tuple[str, str]:
         if "|" in raw:
@@ -100,13 +109,29 @@ class MarkerParser:
                     changed = True
                     continue
 
+            # Some models omit the opening/closing brackets around this
+            # internal action. Parse its strict UUID form too, rather than
+            # leaking ACTION:focus_topic:<uuid> into the learner's transcript.
+            naked_action = _NAKED_FOCUS_TOPIC_RE.search(self._buffer)
+            if naked_action:
+                before = self._buffer[:naked_action.start()]
+                if before:
+                    events.append(("text", before))
+                events.append(("action", {"action": "focus_topic", "value": naked_action.group(1)}))
+                self._buffer = self._buffer[naked_action.end():]
+                changed = True
+                continue
+
         # Flush safe buffer content
         if self._buffer and not self._has_pending():
             events.append(("text", self._buffer))
             self._buffer = ""
         elif self._has_pending() and len(self._buffer) > 500:
             logger.warning("Flushing oversized marker buffer (%d chars)", len(self._buffer))
-            events.append(("text", self._buffer))
+            cleaned = _INCOMPLETE_MARKER_RE.sub("", self._buffer)
+            cleaned = _INCOMPLETE_NAKED_ACTION_RE.sub("", cleaned)
+            if cleaned:
+                events.append(("text", cleaned))
             self._buffer = ""
 
         return events
@@ -116,5 +141,6 @@ class MarkerParser:
         if not self._buffer:
             return None
         cleaned = _INCOMPLETE_MARKER_RE.sub("", self._buffer)
+        cleaned = _INCOMPLETE_NAKED_ACTION_RE.sub("", cleaned)
         self._buffer = ""
         return cleaned or None

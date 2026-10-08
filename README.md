@@ -68,10 +68,16 @@ Open [http://localhost:3001](http://localhost:3001). Done.
 cd apps/api
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-core.txt
-uvicorn main:app --reload --port 8000
+python -m uvicorn main:app --port 8000
 
 # Frontend (separate terminal)
 cd apps/web && npm install && npm run dev
+
+For a stable local run (recommended when you are using the product rather than editing code), run this from the project root:
+
+```bash
+bash scripts/start_local_stable.sh
+```
 ```
 
 Visit [http://localhost:3001](http://localhost:3001).

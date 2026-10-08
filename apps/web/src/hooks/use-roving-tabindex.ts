@@ -51,6 +51,16 @@ export function useRovingTabindex(
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const isEditableTarget = target?.closest(
+        'input, textarea, select, [contenteditable="true"], [role="textbox"]',
+      );
+
+      // Let text controls keep their native caret and selection behavior. The
+      // block grid contains interactive children, so their key events bubble
+      // through this container as well.
+      if (isEditableTarget || e.isComposing) return;
+
       const freshItems = getItems();
       if (freshItems.length === 0) return;
 

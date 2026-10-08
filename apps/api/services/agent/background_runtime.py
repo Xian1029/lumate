@@ -104,12 +104,17 @@ async def enqueue_post_process_task(ctx: AgentContext) -> str:
     """Persist post-processing work so it survives process restarts."""
     from services.activity.engine import submit_task
 
+    use_chinese = (ctx.response_language or "zh").lower().startswith("zh")
     task = await submit_task(
         user_id=ctx.user_id,
         course_id=ctx.course_id,
         task_type="chat_post_process",
-        title="Post-process chat turn",
-        summary="Finalize chat analytics, memory, and study signals.",
+        title="整理本轮对话" if use_chinese else "Post-process chat turn",
+        summary=(
+            "整理对话分析、学习记忆和学习信号。"
+            if use_chinese
+            else "Finalize chat analytics, memory, and study signals."
+        ),
         source="agent",
         input_json={"context": ctx.to_postprocess_payload()},
         metadata_json={

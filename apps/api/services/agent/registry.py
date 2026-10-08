@@ -51,6 +51,7 @@ def build_agent_context(
     learning_mode: str | None = None,
     block_types: list[str] | None = None,
     dismissed_block_types: list[str] | None = None,
+    response_language: str = "zh",
 ) -> AgentContext:
     """Create a normalized AgentContext for chat or workflow entry points."""
     ctx = AgentContext(
@@ -64,6 +65,7 @@ def build_agent_context(
         tab_context=tab_context or {},
         images=images or [],
         learning_mode=learning_mode,
+        response_language=response_language,
     )
     if scene:
         ctx.scene = scene

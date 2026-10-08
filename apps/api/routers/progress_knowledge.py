@@ -50,8 +50,6 @@ async def get_knowledge_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Get knowledge graph for a course (D3-compatible format)."""
-    if not settings.enable_experimental_loom:
-        raise HTTPException(404, "LOOM knowledge graph is experimental. Set ENABLE_EXPERIMENTAL_LOOM=true to enable.")
     try:
         return await build_knowledge_graph(db, course_id, user.id)
     except KnowledgeGraphUnavailableError:
@@ -116,7 +114,17 @@ async def get_misconception_dashboard(
     concept_map: dict[str, dict] = {}
     for wa, prob in wrong_rows:
         metadata = prob.problem_metadata or {}
-        concept = metadata.get("core_concept") or metadata.get("topic") or "Unknown"
+        concept = metadata.get("core_concept") or metadata.get("topic")
+        if (
+            not isinstance(concept, str)
+            or not concept.strip()
+            or concept.strip().casefold() in {"unknown", "none", "null"}
+        ) and wa.knowledge_points:
+            concept = wa.knowledge_points[0] if isinstance(wa.knowledge_points, list) else wa.knowledge_points
+        if not isinstance(concept, str) or not concept.strip() or concept.strip().casefold() in {"unknown", "none", "null"}:
+            # Do not present missing metadata as a real learning blind spot.
+            continue
+        concept = concept.strip()
         key = concept.lower().strip()
 
         if key not in concept_map:
@@ -128,6 +136,7 @@ async def get_misconception_dashboard(
                 "diagnoses": {},
                 "latest_error_at": None,
                 "sample_questions": [],
+                "question_map": {},
                 "misconception_types": [],
             }
 
@@ -146,14 +155,39 @@ async def get_misconception_dashboard(
             if entry["latest_error_at"] is None or wa.created_at > entry["latest_error_at"]:
                 entry["latest_error_at"] = wa.created_at
 
-        if len(entry["sample_questions"]) < 3:
-            entry["sample_questions"].append({
+        # One logical question is shown once. Repeated attempts are folded
+        # into the same sample so the dashboard remains readable while still
+        # exposing how often the learner met the same trap.
+        question_key = (prob.question or f"problem:{prob.id}").strip().casefold()
+        question_map = entry["question_map"]
+        sample = question_map.get(question_key)
+        if sample is None:
+            sample = {
                 "question": prob.question[:200] if prob.question else "",
                 "user_answer": wa.user_answer[:100] if wa.user_answer else "",
                 "correct_answer": wa.correct_answer[:100] if wa.correct_answer else "",
                 "error_category": wa.error_category,
                 "diagnosis": wa.diagnosis,
-            })
+                "attempt_count": 0,
+                "resolved_attempt_count": 0,
+                "resolved": False,
+                "review_count": 0,
+                "last_reviewed_at": None,
+            }
+            question_map[question_key] = sample
+        sample["attempt_count"] += 1
+        if wa.mastered:
+            sample["resolved_attempt_count"] += 1
+        # Rows are ordered newest-first. A question is considered resolved
+        # as soon as its latest review is mastered; older failed attempts are
+        # retained only as history and must not keep the question active.
+        if sample["attempt_count"] == 1:
+            sample["resolved"] = bool(wa.mastered)
+        sample["review_count"] = max(sample["review_count"], wa.review_count or 0)
+        if wa.last_reviewed_at and (
+            sample["last_reviewed_at"] is None or wa.last_reviewed_at > sample["last_reviewed_at"]
+        ):
+            sample["last_reviewed_at"] = wa.last_reviewed_at.isoformat()
 
         detail = wa.error_detail or {}
         if detail.get("misconception_type"):
@@ -174,6 +208,7 @@ async def get_misconception_dashboard(
                         "diagnoses": {},
                         "latest_error_at": None,
                         "sample_questions": [],
+                        "question_map": {},
                         "misconception_types": [],
                     }
                 mt = probe.get("misconception_type")
@@ -183,9 +218,14 @@ async def get_misconception_dashboard(
     now = datetime.now(timezone.utc)
     misconceptions = []
     for key, entry in concept_map.items():
-        active_errors = entry["total_errors"] - entry["mastered_errors"]
-        if active_errors <= 0 and not entry["misconception_types"]:
-            continue
+        # Progress is question-based, not attempt-based. Repeated attempts
+        # for one question are history and must not inflate the denominator.
+        question_samples = list(entry["question_map"].values())
+        question_total = len(question_samples)
+        question_mastered = sum(1 for sample in question_samples if sample.get("resolved"))
+        active_errors = question_total - question_mastered
+        # Keep resolved concepts visible so the dashboard is linked to review
+        # history; resolved is a state, not a reason to erase learning history.
 
         recency_days = 999
         if entry["latest_error_at"]:
@@ -204,11 +244,12 @@ async def get_misconception_dashboard(
 
         priority_score = round(active_errors * 0.6 + recency_boost * 0.4, 2)
 
+        samples = list(entry["question_map"].values())[:3]
         misconceptions.append({
             "concept": entry["concept"],
             "active_errors": active_errors,
-            "total_errors": entry["total_errors"],
-            "mastered_errors": entry["mastered_errors"],
+            "total_errors": question_total,
+            "mastered_errors": question_mastered,
             "resolution_rate": round(
                 entry["mastered_errors"] / max(entry["total_errors"], 1) * 100, 1
             ),
@@ -216,7 +257,9 @@ async def get_misconception_dashboard(
             "dominant_misconception_type": dominant_misconception,
             "error_categories": entry["error_categories"],
             "priority_score": priority_score,
-            "sample_questions": entry["sample_questions"],
+            "sample_questions": samples,
+            "status": "resolved" if active_errors == 0 else "active",
+            "question_count": len(entry["question_map"]),
         })
 
     misconceptions.sort(key=lambda x: x["priority_score"], reverse=True)
@@ -262,8 +305,6 @@ async def get_review_session(
     db: AsyncSession = Depends(get_db),
 ):
     """Get LECTOR smart review session — semantically clustered concepts to review."""
-    if not settings.enable_experimental_lector:
-        raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
     from services.lector import get_smart_review_session, ReviewItem
 
     items = await get_smart_review_session(db, user.id, course_id, max_items=max_items)
@@ -320,8 +361,6 @@ async def submit_review_rating(
 
     Uses FSRS review_card() for scheduling (consistent with LOOM mastery updates).
     """
-    if not settings.enable_experimental_lector:
-        raise HTTPException(404, "LECTOR semantic review is experimental. Set ENABLE_EXPERIMENTAL_LECTOR=true to enable.")
     from models.knowledge_graph import ConceptMastery
     from services.spaced_repetition.fsrs import FSRSCard, review_card as fsrs_review
 

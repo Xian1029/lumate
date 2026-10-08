@@ -17,6 +17,7 @@ import { useImageAttachments } from "@/components/chat/use-image-attachments";
 import { ImagePreviewStrip } from "@/components/chat/image-preview-strip";
 import { AttachmentButtons } from "@/components/chat/attachment-buttons";
 import { SendButton } from "@/components/chat/send-button";
+import { findNodeById } from "@/lib/content-tree";
 
 interface ChatInputProps {
   courseId: string;
@@ -55,6 +56,8 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const abortStream = useChatStore((s) => s.abortStream);
   const activeSection = useWorkspaceStore((s) => s.activeSection);
+  const selectedNodeId = useWorkspaceStore((s) => s.selectedNodeId);
+  const contentTree = useCourseStore((s) => s.contentTree);
   const fetchContentTree = useCourseStore((s) => s.fetchContentTree);
   const fetchIngestionJobs = useCourseStore((s) => s.fetchIngestionJobs);
 
@@ -99,9 +102,18 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
     }
     await sendMessage(courseId, text || "(image)", {
       activeTab: activeSection,
+      tabContext: (() => {
+        const node = findNodeById(contentTree, selectedNodeId);
+        return node ? {
+          selected_node_id: node.id,
+          selected_node_title: node.title,
+          selected_node_content: node.content?.slice(0, 4000) ?? "",
+          instruction: "Only answer from this current learning node unless the learner explicitly asks to switch topics.",
+        } : { context_source: activeSection };
+      })(),
       images: attachedImages,
     });
-  }, [activeSection, clearImages, courseId, input, pendingImages, sendMessage]);
+  }, [activeSection, clearImages, contentTree, courseId, input, pendingImages, selectedNodeId, sendMessage]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -131,7 +143,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
   return (
     <div
       role="form"
-      aria-label="Chat input"
+      aria-label={t("ui.chat_input")}
       className={cn(
         "shrink-0 border-t border-border/60 bg-background px-3 py-2",
         isDragOver && "ring-2 ring-primary ring-inset bg-primary/5",
@@ -147,7 +159,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
         accept="image/*"
         multiple
         className="hidden"
-        aria-label="Attach images"
+        aria-label={t("ui.attach_images")}
         onChange={handleImageChange}
       />
 
@@ -167,7 +179,7 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
 
         {/* Auto-growing textarea */}
         <span id="chat-input-hint" className="sr-only">
-          Press Enter to send, Shift+Enter for new line
+          按回车发送，Shift+回车换行
         </span>
         <textarea
           ref={textareaRef}
@@ -177,14 +189,14 @@ export function ChatInput({ courseId, disabled }: ChatInputProps) {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          aria-label="Message input"
+          aria-label={t("ui.message_input")}
           aria-describedby="chat-input-hint"
           placeholder={
             isDisabled
               ? t("chat.disabledNeedLlm")
               : pendingImages.length > 0
-                ? "Add a message about these images..."
-                : "Ask anything..."
+                ? t("ui.chat_add_image_msg")
+                : t("ui.chat_ask_anything")
           }
           rows={1}
           disabled={isDisabled}

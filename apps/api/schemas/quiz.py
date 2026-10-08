@@ -12,9 +12,13 @@ from services.practice.annotation import normalize_question_options
 class ExtractRequest(BaseModel):
     course_id: uuid.UUID
     content_node_id: uuid.UUID | None = None
-    count: int | None = None
+    # One learner-facing generation request is intentionally small enough for
+    # focused practice.  The API enforces the same cap when callers omit this.
+    count: int | None = Field(default=None, ge=1, le=15)
     mode: str | None = None  # learning mode: course_following, self_paced, exam_prep, maintenance
     difficulty: str | None = None  # easy | medium | hard
+    language: str | None = Field(default=None, pattern="^(en|zh)$")
+    avoid_existing: bool = False
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -46,6 +50,10 @@ class ExtractResponse(BaseModel):
     discarded_count: int = 0
     node_failures: list[QuizNodeFailureResponse] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    problem_ids: list[str] = Field(default_factory=list)
+    # A learner-visible exercise set.  The client uses it only to resume an
+    # unfinished set; completion is still decided from server-side results.
+    batch_id: str | None = None
 
 
 class ProblemResponse(BaseModel):
@@ -54,8 +62,21 @@ class ProblemResponse(BaseModel):
     question: str
     options: dict[str, str] | None
     order_index: int
+    content_node_id: uuid.UUID | None = None
     difficulty_layer: int | None = None
     problem_metadata: dict[str, Any] | None = None
+    # Safe readiness flags let the UI exclude legacy questions that cannot show
+    # feedback, without revealing the correct answer before submission.
+    answer_ready: bool = False
+    explanation_ready: bool = False
+    # Filled only when the learner has already submitted this problem
+    # (checked via PracticeResult existence in list_problems endpoint).
+    correct_answer: str | None = None
+    explanation: str | None = None
+    # Server-authoritative completion state.  Do not infer this from cached
+    # browser answers: a learner may resume on another device.
+    is_answered: bool = False
+    source_batch_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -75,9 +96,18 @@ class PrerequisiteGap(BaseModel):
 class AnswerResponse(BaseModel):
     is_correct: bool
     correct_answer: str | None
+    user_answer: str | None
     explanation: str | None
     prerequisite_gaps: list[PrerequisiteGap] | None = None
     warnings: list[str] = Field(default_factory=list)
+    # Unified grading output (answer-grader-v2+). Optional so older clients
+    # and the coding grader path remain valid.
+    match_type: str | None = None
+    score: float | None = None
+    needs_review: bool = False
+    per_blank_results: list[dict] | None = None
+    grader_version: str | None = None
+    feedback: str | None = None
 
 
 class MasterySnapshotResponse(BaseModel):

@@ -1,146 +1,29 @@
 "use client";
 
-import { useLocale } from "@/lib/i18n-context";
-import { RuntimeAlert } from "@/components/shared/runtime-alert";
-import { useDashboardData } from "./_hooks/use-dashboard-data";
-import { CourseCardsSkeleton } from "./_components/dash-section";
-import { LearningRhythm } from "./_components/digest-fallback";
-import { DashboardSidebar } from "./_components/dashboard-sidebar";
-import {
-  OverviewStats,
-  TodayDigestSection,
-  UpcomingDeadlinesSection,
-  UrgentReviewsSection,
-  KnowledgeDensitySection,
-  AgentInsightsSection,
-  PendingApprovalsSection,
-  ModeRecommendationsSection,
-  WeeklyStatsSection,
-  MasteryOverviewSection,
-} from "./_components/dashboard-sections";
-import { CourseSpacesSection, DashboardEmptyState } from "./_components/dashboard-spaces";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { Plus } from "lucide-react";
+import { deleteCourse, startLearningPlan } from "@/lib/api";
+import { useLearningHome } from "./_hooks/use-learning-home";
+import { DraftPlansSection, FirstSpaceEmptyState, LearningSummary, NextLearningCard, PendingPlansSection, ProcessingSection, RecentLearning, ReviewSection, SpacesSection, TodayTasksSection } from "./_components/learning-home";
 
-export default function DashboardPage() {
-  const { locale } = useLocale();
-  const {
-    router, t, tf, courses, loading, error, health,
-    reviewSummaries, notifications, pendingTasks, actingTasks,
-    modeRecommendations, actingModeCourses, upcomingDeadlines,
-    dailyDigest, knowledgeDensity, weeklyReport, masteryOverview,
-    totalActiveGoals, totalPendingApprovals, totalRunningTasks, totalUrgentReviews,
-    actOnTask, applyModeRecommendation, dismissModeRecommendation,
-  } = useDashboardData();
+export default function LearningHomePage() {
+  const router = useRouter();
+  const { overview, loading, error, reload } = useLearningHome();
+  const navigate = (href: string) => router.push(href);
+  // Await the authoritative task mutation before navigating.  The endpoint is
+  // idempotent for IN_PROGRESS, so a retried click never turns into a 409.
+  const startTask = async (planId: string) => (await startLearningPlan(planId)).href;
+  const deleteSpace = async (courseId: string) => { await deleteCourse(courseId); await reload(); };
 
-  const navigate = (path: string) => router.push(path);
+  // The overview already carries the server-resolved task location.  Prefetch
+  // it while the learner is reading the card, so the first click only waits
+  // for the tiny authoritative start mutation rather than a route compile.
+  useEffect(() => {
+    const href = overview?.current_learning_action?.href;
+    if (href) router.prefetch(href);
+  }, [overview?.current_learning_action?.href, router]);
 
-  const getDeadlineLabel = (daysUntil: number): string => {
-    if (daysUntil <= 0) return t("home.deadline.overdue");
-    if (daysUntil === 1) return t("home.deadline.tomorrow");
-    return tf("home.deadline.inDays", { days: daysUntil });
-  };
-
-  return (
-    <div className="min-h-screen bg-background">
-      <div className="flex min-h-screen flex-col md:flex-row">
-        <DashboardSidebar health={health} t={t} onNavigate={navigate} />
-
-        <main className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6 md:px-10 md:py-12">
-            <RuntimeAlert health={health} />
-
-            {error && (
-              <div className="rounded-2xl bg-destructive/5 px-5 py-4 text-sm text-destructive card-shadow">
-                {t("dashboard.loadErrorPrefix")}: {error}
-              </div>
-            )}
-
-            {/* Title + New Space */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div className="flex flex-col gap-1.5">
-                <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("dashboard.title")}</h1>
-                <p className="text-sm text-muted-foreground">{t("dashboard.subtitle")}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => router.push("/new")}
-                className="h-10 px-6 bg-brand text-brand-foreground rounded-full text-sm font-medium hover:opacity-90 transition-all hover:shadow-md shrink-0 self-start sm:self-auto"
-              >
-                + {t("dashboard.create")}
-              </button>
-            </div>
-
-            {courses.length > 0 && (
-              <OverviewStats
-                totalActiveGoals={totalActiveGoals}
-                totalPendingApprovals={totalPendingApprovals}
-                totalRunningTasks={totalRunningTasks}
-                t={t}
-              />
-            )}
-
-            {courses.length > 0 && <WeeklyStatsSection weeklyReport={weeklyReport} />}
-            {courses.length > 1 && <MasteryOverviewSection masteryOverview={masteryOverview} onNavigate={navigate} />}
-
-            {courses.length > 0 && (
-              <TodayDigestSection
-                courses={courses} dailyDigest={dailyDigest}
-                reviewSummaries={reviewSummaries} upcomingDeadlines={upcomingDeadlines}
-                t={t} tf={tf}
-              />
-            )}
-
-            {courses.length > 0 && (
-              <UpcomingDeadlinesSection
-                upcomingDeadlines={upcomingDeadlines}
-                getDeadlineLabel={getDeadlineLabel}
-                onNavigate={navigate} t={t}
-              />
-            )}
-
-            {courses.length > 0 && (
-              <UrgentReviewsSection
-                reviewSummaries={reviewSummaries}
-                totalUrgentReviews={totalUrgentReviews}
-                onNavigate={navigate} t={t} tf={tf}
-              />
-            )}
-
-            {courses.length > 1 && (
-              <KnowledgeDensitySection knowledgeDensity={knowledgeDensity} t={t} />
-            )}
-
-            {courses.length > 0 && (
-              <AgentInsightsSection notifications={notifications} onNavigate={navigate} t={t} />
-            )}
-
-            {courses.length > 0 && (
-              <PendingApprovalsSection
-                pendingTasks={pendingTasks} actingTasks={actingTasks}
-                onActOnTask={(id, action) => void actOnTask(id, action)}
-                t={t} tf={tf}
-              />
-            )}
-
-            {courses.length > 0 && (
-              <ModeRecommendationsSection
-                modeRecommendations={modeRecommendations} actingModeCourses={actingModeCourses}
-                onApply={(item) => void applyModeRecommendation(item)}
-                onDismiss={dismissModeRecommendation}
-                onNavigate={navigate} t={t}
-              />
-            )}
-
-            {courses.length > 0 && <LearningRhythm t={t} />}
-            {loading && <CourseCardsSkeleton />}
-            {courses.length > 0 && (
-              <CourseSpacesSection courses={courses} locale={locale} onNavigate={navigate} t={t} />
-            )}
-            {!loading && courses.length === 0 && (
-              <DashboardEmptyState onNavigate={navigate} t={t} />
-            )}
-          </div>
-        </main>
-      </div>
-    </div>
-  );
+  const empty = !loading && overview?.learning_spaces.length === 0;
+  return <main className="min-h-screen bg-background"><div className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-8 sm:px-6 md:py-12"><header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm text-muted-foreground">我的学习首页</p><p className="mt-1 text-lg font-semibold text-foreground">今天，先完成一个小目标。</p></div><div className="flex items-center gap-3"><button type="button" onClick={() => navigate("/learning-plans")} className="rounded-full bg-brand-muted px-3 py-2 text-sm font-semibold text-brand">我的学习计划</button><button type="button" onClick={() => navigate("/new")} className="inline-flex h-10 items-center gap-2 rounded-full bg-brand px-4 text-sm font-semibold text-brand-foreground"><Plus className="size-4" />新建学习空间</button></div></header>{error && <div className="rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">加载学习数据失败：{error}<button type="button" onClick={reload} className="ml-3 font-medium underline">重试</button></div>}{empty ? <FirstSpaceEmptyState onNavigate={navigate} /> : <><NextLearningCard action={overview?.current_learning_action ?? null} loading={loading} onNavigate={navigate} onStartPlan={startTask} />{overview && <TodayTasksSection overview={overview} onNavigate={navigate} onStartPlan={startTask} />}{overview && <RecentLearning recent={overview.recent_learning} onNavigate={navigate} />}{<DraftPlansSection plans={overview?.draft_learning_plans ?? []} onNavigate={navigate} />}<PendingPlansSection plans={overview?.pending_learning_plans ?? []} onNavigate={navigate} />{overview && <ReviewSection reviews={overview.review_queue} onNavigate={navigate} />}{overview && <ProcessingSection uploads={overview.processing_uploads} onNavigate={navigate} />}{overview && <SpacesSection spaces={overview.learning_spaces} onNavigate={navigate} onDelete={deleteSpace} />}{overview && <LearningSummary overview={overview} />}</>}</div></main>;
 }

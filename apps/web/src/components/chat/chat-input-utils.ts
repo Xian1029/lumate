@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import type { ImageAttachment } from "@/lib/api";
 
 export const ACCEPTED_FILE_TYPES =
@@ -22,7 +23,7 @@ export async function fileToImageAttachment(
         filename: file.name,
       });
     };
-    reader.onerror = () => reject(new Error("Failed to read image file"));
+    reader.onerror = () => reject(new Error(t("ui.failed_read_image")));
     reader.readAsDataURL(file);
   });
 }

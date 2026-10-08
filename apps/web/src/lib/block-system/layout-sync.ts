@@ -12,7 +12,8 @@ export function persistCourseSpaceLayoutLocally(courseId: string, layout: SpaceL
 }
 
 export async function syncCourseSpaceLayout(courseId: string, layout: SpaceLayout): Promise<SpaceLayout> {
-  const persistedLayout = persistCourseSpaceLayoutLocally(courseId, layout);
-  await updateCourseLayout(courseId, persistedLayout);
-  return persistedLayout;
+  // The server owns the workspace. Cache only an acknowledged layout so a
+  // failed optimistic edit can never overwrite the next server read.
+  const response = await updateCourseLayout(courseId, layout);
+  return persistCourseSpaceLayoutLocally(courseId, response.layout as unknown as SpaceLayout);
 }

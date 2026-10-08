@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -118,6 +118,23 @@ async def get_chat_session_messages(
     }
 
 
+@router.delete("/sessions/{session_id}", status_code=204, summary="Delete a chat session")
+async def delete_chat_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user.id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise NotFoundError("Chat session", session_id)
+    await db.execute(delete(ChatMessageLog).where(ChatMessageLog.session_id == session_id))
+    await db.delete(session)
+    await db.commit()
+
+
 @router.post("/", summary="Send chat message", description="Stream a tutoring response via SSE using the multi-agent orchestrator.")
 async def chat_stream(
     body: ChatRequest,
@@ -189,6 +206,7 @@ async def chat_stream(
                             learning_mode=body.learning_mode,
                             block_types=body.block_types or None,
                             dismissed_block_types=body.dismissed_block_types or None,
+                            response_language=body.locale,
                         ):
                             # Stop streaming if client disconnected (saves LLM cost)
                             if await request.is_disconnected():
@@ -247,9 +265,17 @@ async def chat_stream(
                 except (ValueError, KeyError, SQLAlchemyError, ConnectionError, OSError, RuntimeError) as e:
                     from libs.exceptions import is_llm_unavailable_error
                     if is_llm_unavailable_error(e):
-                        error_msg = "The AI service is temporarily unavailable. Please try again shortly."
+                        error_msg = (
+                            "AI 服务暂时不可用，请稍后重试。"
+                            if body.locale == "zh"
+                            else "The AI service is temporarily unavailable. Please try again shortly."
+                        )
                     else:
-                        error_msg = "An internal error occurred. Please try again."
+                        error_msg = (
+                            "服务出现异常，请重试。"
+                            if body.locale == "zh"
+                            else "An internal error occurred. Please try again."
+                        )
                     logger.exception("Orchestrator error: %s", e)
                     yield {"event": "error", "data": json.dumps({"error": error_msg})}
         except StreamLimitExceeded:
@@ -275,7 +301,7 @@ async def get_greeting(
     course = await get_course_or_404(db, course_id, user_id=user.id)
 
     # Gather learning state
-    greeting_parts = [f"Welcome back to **{course.name}**!"]
+    greeting_parts = [f"欢迎回到 **{course.name}**！"]
 
     review: dict | None = None
     upcoming = None
@@ -291,11 +317,11 @@ async def get_greeting(
             if concepts:
                 concept_list = ", ".join(f"**{c}**" for c in concepts)
                 greeting_parts.append(
-                    f"You have {review.get('urgent_count', 0)} concept(s) that could use a review: {concept_list}."
+                    f"你有 {review.get('urgent_count', 0)} 个知识点需要复习：{concept_list}。"
                 )
-            greeting_parts.append("Want me to start a quick review session?")
+            greeting_parts.append("要现在开始一次快速复习吗？")
         else:
-            greeting_parts.append("You're all caught up on reviews!")
+            greeting_parts.append("当前复习任务已经全部完成！")
     except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
         logger.warning("Greeting: review summary unavailable: %s", exc)
         degraded_features.append("review_summary")
@@ -307,14 +333,14 @@ async def get_greeting(
         if graph.get("weak_concepts"):
             weak = graph["weak_concepts"][:2]
             greeting_parts.append(
-                f"Areas to strengthen: {', '.join(weak)}."
+                f"建议重点巩固：{'、'.join(weak)}。"
             )
         elif graph.get("nodes"):
             mastered = sum(1 for n in graph["nodes"] if n.get("mastery", 0) >= 0.8)
             total = len(graph["nodes"])
             if total > 0:
                 greeting_parts.append(
-                    f"You've mastered {mastered}/{total} concepts so far."
+                    f"目前已掌握 {mastered}/{total} 个知识点。"
                 )
     except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
         logger.warning("Greeting: mastery graph unavailable: %s", exc)
@@ -338,13 +364,13 @@ async def get_greeting(
             days_until = (upcoming.due_date - now).days
             if days_until <= 3:
                 greeting_parts.append(
-                    f"Heads up: **{upcoming.title}** is due in {days_until} day(s)!"
+                    f"提醒：**{upcoming.title}** 距离截止还有 {days_until} 天！"
                 )
     except (ImportError, SQLAlchemyError, KeyError, ValueError, TypeError) as exc:
         logger.warning("Greeting: deadlines unavailable: %s", exc)
         degraded_features.append("deadlines")
 
-    greeting_parts.append("What would you like to work on?")
+    greeting_parts.append("今天想从哪里开始学习？")
 
     # Build suggested actions based on greeting context
     suggested_actions: list[dict[str, str]] = []
@@ -352,13 +378,13 @@ async def get_greeting(
         suggested_actions.append({
             "action": "agent_insight",
             "value": "review_needed",
-            "extra": f"{review.get('urgent_count', 0)} concept(s) at risk",
+            "extra": f"{review.get('urgent_count', 0)} 个知识点需要复习",
         })
     if upcoming and days_until is not None and days_until <= 7:
         suggested_actions.append({
             "action": "suggest_mode",
             "value": "exam_prep",
-            "extra": f"{upcoming.title} due in {days_until} day(s)",
+            "extra": f"{upcoming.title} 距离截止还有 {days_until} 天",
         })
 
     # Evaluate proactive session offer (Bloom 2σ — system-initiated learning)

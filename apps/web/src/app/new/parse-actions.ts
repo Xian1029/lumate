@@ -11,6 +11,12 @@ import { isCanvasUrl } from "./types";
 
 type LogFn = (text: string, color: string) => void;
 
+/** Never expose parser/library exception text in the learner-facing progress UI. */
+export function friendlySourceError(filename?: string): string {
+  const name = filename ? `${filename}：` : "";
+  return `${name}暂时未能解析。进入学习空间后可重新上传，或换一份文件。`;
+}
+
 interface SubmitSourcesArgs {
   course: { id: string };
   files: FileItem[];
@@ -55,8 +61,8 @@ export async function submitSources(args: SubmitSourcesArgs): Promise<boolean> {
           `${new Date().toLocaleTimeString()}  ${f.name}: ${result.nodes_created} ${t("new.logNodesQueued")}`,
           "text-success",
         );
-      } catch (err) {
-        addLog(`${new Date().toLocaleTimeString()}  ${t("new.logFailed")}: ${f.name} — ${(err as Error).message}`, "text-destructive");
+      } catch {
+        addLog(`${new Date().toLocaleTimeString()}  ${friendlySourceError(f.name)}`, "text-destructive");
       }
     }
   }

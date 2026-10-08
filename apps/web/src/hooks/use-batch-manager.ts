@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GeneratedBatchSummaryBase } from "@/lib/api/client";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -62,13 +63,13 @@ export function useBatchManager<TBatch extends GeneratedBatchSummaryBase>({
         const result = await saveFn();
         toast.success(
           result.replaced
-            ? `Replaced with version ${result.version}`
-            : "Saved successfully",
+            ? `已更新为第 ${result.version} 版`
+            : t("ui.saved_successfully"),
         );
         await loadBatches();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to save",
+          error instanceof Error ? error.message : t("ui.failed_to_save"),
         );
       } finally {
         setSaving(false);

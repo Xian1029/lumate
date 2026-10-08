@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { getMisconceptionDashboard, type MisconceptionDashboard, type MisconceptionItem } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -9,19 +10,19 @@ interface MisconceptionViewProps {
 }
 
 const DIAGNOSIS_LABELS: Record<string, string> = {
-  fundamental_gap: "Fundamental Gap",
-  transfer_gap: "Transfer Gap",
-  trap_vulnerability: "Trap Vulnerability",
-  carelessness: "Carelessness",
-  mastered: "Mastered",
+  fundamental_gap: t("ui.fundamental_gap"),
+  transfer_gap: t("ui.transfer_gap"),
+  trap_vulnerability: t("ui.trap_vulnerability"),
+  carelessness: t("ui.carelessness"),
+  mastered: t("ui.mastered"),
 };
 
 const MISCONCEPTION_TYPE_LABELS: Record<string, string> = {
-  surface_memorization: "Surface Memorization",
-  confused_similar: "Confused Similar Concepts",
-  missing_prerequisite: "Missing Prerequisite",
-  procedural_only: "Procedural Only",
-  partial_understanding: "Partial Understanding",
+  surface_memorization: t("ui.surface_memorization"),
+  confused_similar: t("ui.confused_similar"),
+  missing_prerequisite: t("ui.missing_prereq"),
+  procedural_only: t("ui.procedural_only"),
+  partial_understanding: t("ui.partial_understanding"),
 };
 
 const DIAGNOSIS_COLORS: Record<string, string> = {
@@ -31,13 +32,18 @@ const DIAGNOSIS_COLORS: Record<string, string> = {
   carelessness: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
 };
 
-function PriorityBar({ score }: { score: number }) {
-  const maxScore = 5;
-  const pct = Math.min(score / maxScore, 1) * 100;
-  const color = pct > 66 ? "bg-red-500" : pct > 33 ? "bg-amber-500" : "bg-zinc-400";
+function ResolutionBar({ resolved, total, status }: { resolved: number; total: number; status?: "active" | "resolved" }) {
+  const pct = status === "resolved" ? 100 : Math.min(Math.max(resolved / Math.max(total, 1), 0), 1) * 100;
   return (
-    <div className="h-1.5 w-16 rounded-full bg-muted overflow-hidden">
-      <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+    <div
+      className="h-2 w-20 overflow-hidden rounded-full bg-muted"
+      role="progressbar"
+      aria-label={status === "resolved" ? "已全部解决" : `已解决 ${resolved} / ${total}`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+    >
+      <div className={`h-full rounded-full transition-all ${status === "resolved" ? "bg-emerald-500" : "bg-amber-500"}`} style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -57,15 +63,15 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs text-muted-foreground font-mono w-5 shrink-0">
-            #{rank}
+          <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
+            第{rank}项
           </span>
           <span className="text-sm font-medium truncate">{item.concept}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <PriorityBar score={item.priority_score} />
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {item.active_errors} active
+          <ResolutionBar resolved={item.mastered_errors} total={item.total_errors} status={item.status} />
+          <span className={`text-xs tabular-nums ${item.status === "resolved" ? "font-medium text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}`}>
+            {item.status === "resolved" ? "已全部解决" : `已解决 ${item.mastered_errors} / ${item.total_errors}`}
           </span>
         </div>
       </div>
@@ -84,9 +90,13 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
             {MISCONCEPTION_TYPE_LABELS[item.dominant_misconception_type] ?? item.dominant_misconception_type}
           </Badge>
         ) : null}
-        {item.resolution_rate > 0 ? (
+        {item.status === "resolved" ? (
           <Badge variant="outline" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-            {item.resolution_rate}% resolved
+            已解决
+          </Badge>
+        ) : item.resolution_rate > 0 ? (
+          <Badge variant="outline" className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+            {item.resolution_rate}% {t("ui.resolved")}
           </Badge>
         ) : null}
       </div>
@@ -94,16 +104,21 @@ function MisconceptionCard({ item, rank }: { item: MisconceptionItem; rank: numb
       {expanded && item.sample_questions.length > 0 ? (
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Sample errors
+            易错样例
           </span>
           {item.sample_questions.map((q, i) => (
             <div key={i} className="text-xs space-y-0.5 pl-2 border-l-2 border-muted">
               <p className="text-foreground line-clamp-2">{q.question}</p>
               <p className="text-red-600 dark:text-red-400">
-                Your answer: {q.user_answer || "—"}
+                你的答案：{q.user_answer || "—"}
               </p>
               <p className="text-green-600 dark:text-green-400">
-                Correct: {q.correct_answer || "—"}
+                正确答案：{q.correct_answer || "—"}
+              </p>
+              <p className="text-muted-foreground">
+                {q.resolved ? "已在复盘中解决" : "仍需复习"}
+                {q.attempt_count && q.attempt_count > 1 ? ` · 共记录 ${q.attempt_count} 次作答` : ""}
+                {q.review_count ? ` · 复盘 ${q.review_count} 次` : ""}
               </p>
             </div>
           ))}
@@ -137,7 +152,7 @@ export function MisconceptionView({ courseId }: MisconceptionViewProps) {
         className="flex-1 flex items-center justify-center p-8 text-xs text-muted-foreground"
         data-testid="misconception-panel"
       >
-        Failed to load misconception data.
+        {t("misconception.loadFailed")}
       </div>
     );
   }
@@ -161,9 +176,9 @@ export function MisconceptionView({ courseId }: MisconceptionViewProps) {
         data-testid="misconception-panel"
       >
         <span className="text-2xl">&#10003;</span>
-        <p className="text-sm text-muted-foreground">No active misconceptions detected.</p>
+        <p className="text-sm text-muted-foreground">{t("ui.no_active_misconceptions_detected")}</p>
         <p className="text-xs text-muted-foreground">
-          Keep practicing — the tutor will probe your understanding as you learn.
+          {t("misconception.keepPracticing")}
         </p>
       </div>
     );
@@ -176,31 +191,31 @@ export function MisconceptionView({ courseId }: MisconceptionViewProps) {
   return (
     <div
       role="region"
-      aria-label="Misconception analysis"
+      aria-label={t("ui.misconception_analysis")}
       className="flex-1 flex flex-col gap-4 p-4 overflow-y-auto"
       data-testid="misconception-panel"
     >
       <div>
         <h3 className="text-sm font-medium">
-          Things You Think You Know
+          你以为自己会了，其实还没掌握
         </h3>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Concepts where errors suggest hidden misunderstanding, ranked by priority.
+          根据错题分析，这些知识点可能存在隐藏的理解偏差，按重要程度排序。
         </p>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Active</span>
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{t("ui.active")}</span>
           <span className="text-xl font-semibold tabular-nums">{summary.total_active_errors}</span>
         </div>
         <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Resolved</span>
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{t("ui.resolved")}</span>
           <span className="text-xl font-semibold tabular-nums">{summary.total_resolved}</span>
         </div>
         <div className="rounded-2xl card-shadow bg-card p-3 flex flex-col gap-0.5">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Rate</span>
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{t("ui.rate")}</span>
           <span className="text-xl font-semibold tabular-nums">{summary.resolution_rate}%</span>
         </div>
       </div>

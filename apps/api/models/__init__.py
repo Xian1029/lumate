@@ -6,7 +6,7 @@ from models.content import CourseContentTree
 from models.preference import UserPreference, PreferenceSignal
 from models.practice import PracticeProblem, PracticeResult
 from models.memory import ConversationMemory
-from models.ingestion import IngestionJob, StudySession, Assignment, WrongAnswer
+from models.ingestion import IngestionJob, StudySession, StudySessionHeartbeat, Assignment, WrongAnswer
 from models.progress import LearningProgress, LearningTemplate
 from models.scrape import ScrapeSource, AuthSession
 from models.chat_session import ChatSession
@@ -15,6 +15,9 @@ from models.generated_asset import GeneratedAsset
 from models.study_plan import StudyPlan
 from models.study_goal import StudyGoal
 from models.agent_task import AgentTask
+from models.audit_log import AuditLog
+from models.learning_plan import LearningPlan
+from models.learning_task import LearningTask
 from models.agenda_run import AgendaRun
 from models.agent_kv import AgentKV
 from models.mastery_snapshot import MasterySnapshot
@@ -24,6 +27,15 @@ from models.notification import Notification
 from models.cognitive_baseline import CognitiveBaseline
 from models.usage_event import UsageEvent
 from models.intervention_outcome import InterventionOutcome
+from models.question_catalog import (
+    AbilityTag,
+    CurriculumChapter,
+    CurriculumKnowledgePoint,
+    CurriculumTextbook,
+    QuestionAbilityTagLink,
+    QuestionCatalogEntry,
+    QuestionKnowledgePointLink,
+)
 
 __all__ = [
     "User",
@@ -36,6 +48,7 @@ __all__ = [
     "ConversationMemory",
     "IngestionJob",
     "StudySession",
+    "StudySessionHeartbeat",
     "Assignment",
     "WrongAnswer",
     "LearningProgress",
@@ -48,6 +61,9 @@ __all__ = [
     "StudyPlan",
     "StudyGoal",
     "AgentTask",
+    "AuditLog",
+    "LearningPlan",
+    "LearningTask",
     "AgendaRun",
     "AgentKV",
     "MasterySnapshot",
@@ -59,4 +75,11 @@ __all__ = [
     "CognitiveBaseline",
     "UsageEvent",
     "InterventionOutcome",
+    "CurriculumTextbook",
+    "CurriculumChapter",
+    "CurriculumKnowledgePoint",
+    "AbilityTag",
+    "QuestionCatalogEntry",
+    "QuestionKnowledgePointLink",
+    "QuestionAbilityTagLink",
 ]

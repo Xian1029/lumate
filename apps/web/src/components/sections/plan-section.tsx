@@ -1,72 +1,30 @@
 "use client";
 
-import { lazy } from "react";
-import { useWorkspaceStore } from "@/store/workspace";
+import Link from "next/link";
 import type { LearningMode } from "@/lib/block-system/types";
-import { useT } from "@/lib/i18n-context";
-import { TabbedSection, type TabDef } from "./tabbed-section";
-
-const PlanView = lazy(() =>
-  import("./plan/plan-view").then((m) => ({ default: m.PlanView })),
-);
-const CalendarView = lazy(() =>
-  import("./plan/calendar-view").then((m) => ({ default: m.CalendarView })),
-);
-const ActivityView = lazy(() =>
-  import("./plan/activity-view").then((m) => ({ default: m.ActivityView })),
-);
-const TimelineView = lazy(() =>
-  import("./plan/timeline-view").then((m) => ({ default: m.TimelineView })),
-);
+import { CoursePlanStatus } from "@/components/learning-plans/course-plan-status";
 
 interface PlanSectionProps {
   courseId: string;
   aiActionsEnabled?: boolean;
   learningMode?: LearningMode;
-  defaultTab?: PlanTab;
+  defaultTab?: "plan" | "calendar" | "tasks" | "timeline";
+  exitHref?: string;
 }
-
-type PlanTab = "plan" | "calendar" | "tasks" | "timeline";
 
 export function PlanSection({
   courseId,
-  aiActionsEnabled = true,
-  learningMode,
-  defaultTab,
+  exitHref,
 }: PlanSectionProps) {
-  const t = useT();
-  const storeMode = useWorkspaceStore((s) => s.spaceLayout.mode);
-  const mode = learningMode ?? storeMode;
-  const tabs: TabDef<PlanTab>[] = [
-    { id: "plan", label: t("plan.tabs.plan"), testId: "right-tab-plan" },
-    { id: "calendar", label: t("plan.tabs.calendar") },
-    { id: "timeline", label: "时间线" },
-    { id: "tasks", label: t("plan.tabs.tasks") },
-  ];
-  const resolvedDefaultTab: PlanTab =
-    defaultTab ??
-    (mode === "course_following"
-      ? "calendar"
-      : mode === "self_paced"
-        ? "tasks"
-        : "plan");
-
   return (
-    <TabbedSection tabs={tabs} defaultTab={resolvedDefaultTab} testId="plan-section">
-      {(activeTab) => (
-        <>
-          {activeTab === "plan" ? (
-            <PlanView
-              courseId={courseId}
-              aiActionsEnabled={aiActionsEnabled}
-              learningMode={mode}
-            />
-          ) : null}
-          {activeTab === "calendar" ? <CalendarView courseId={courseId} /> : null}
-          {activeTab === "timeline" ? <TimelineView courseId={courseId} /> : null}
-          {activeTab === "tasks" ? <ActivityView courseId={courseId} /> : null}
-        </>
-      )}
-    </TabbedSection>
+    <section className="w-full space-y-4 p-4" data-testid="plan-section">
+      {exitHref ? <Link href={exitHref} className="text-sm text-brand hover:underline">← 返回学习空间</Link> : null}
+      <CoursePlanStatus courseId={courseId} />
+      <div className="rounded-2xl border border-border/70 bg-card p-4">
+        <p className="font-semibold">管理全部学习计划</p>
+        <p className="mt-1 text-sm text-muted-foreground">确认、执行、暂停和查看历史计划，都会在学习计划中心完成。</p>
+        <Link href="/learning-plans" className="mt-3 inline-flex rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted">打开学习计划中心</Link>
+      </div>
+    </section>
   );
 }

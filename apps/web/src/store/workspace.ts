@@ -11,6 +11,18 @@ import { type BlockSystemState, createBlockSlice } from "./workspace-blocks";
 
 export type SectionId = "notes" | "practice" | "analytics" | "plan";
 
+/**
+ * Ephemeral note editing state shared by the compact block and its immersive
+ * drawer. It is intentionally UI-only: saved notes remain server-owned.
+ */
+export interface NoteDraftSession {
+  courseId: string;
+  title: string;
+  markdown: string;
+  format: string;
+  sourceNodeId: string;
+}
+
 interface CoreWorkspaceState {
   activeSection: SectionId;
   setActiveSection: (id: SectionId) => void;
@@ -33,6 +45,8 @@ interface CoreWorkspaceState {
   /** Notes drawer open state (right-side panel). */
   notesDrawerOpen: boolean;
   setNotesDrawerOpen: (open: boolean) => void;
+  noteDraft: NoteDraftSession | null;
+  setNoteDraft: (draft: NoteDraftSession | null) => void;
 }
 
 type WorkspaceState = CoreWorkspaceState & BlockSystemState;
@@ -70,6 +84,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   notesDrawerOpen: false,
   setNotesDrawerOpen: (open) => set({ notesDrawerOpen: open }),
+  noteDraft: null,
+  setNoteDraft: (draft) => set({ noteDraft: draft }),
 
   // Block system (extracted to workspace-blocks.ts)
   ...createBlockSlice(set, get),

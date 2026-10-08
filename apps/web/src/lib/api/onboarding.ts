@@ -3,11 +3,13 @@
  */
 
 import { request } from "./client";
+import { getLocale } from "@/lib/i18n";
 
 export interface OnboardingRequest {
   message: string;
   history: Array<{ role: string; content: string }>;
   partial_profile?: Record<string, unknown> | null;
+  language?: string;
 }
 
 export interface OnboardingAction {
@@ -54,6 +56,6 @@ export async function interviewTurn(body: OnboardingRequest): Promise<Onboarding
   return request<OnboardingResponse>("/onboarding/interview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, language: body.language ?? getLocale() }),
   });
 }

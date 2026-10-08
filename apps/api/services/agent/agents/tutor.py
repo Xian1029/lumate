@@ -28,7 +28,7 @@ from services.agent.agents.prompts import (  # noqa: F401 — re-exported
     _CODE_RE,
     _FATIGUE_RE,
     _load_strategy_fragments,
-    SOCRATIC_GUARDRAILS,
+    ENGAGING_SOCRATIC_STYLE,
     _QUIZ_INSTRUCTIONS,
     _REVIEW_INSTRUCTIONS,
     _ASSESS_INSTRUCTIONS,
@@ -87,7 +87,9 @@ class TutorAgent(ReActMixin, BaseAgent):
         msg = ctx.user_message
         fatigue_score = ctx.metadata.get("fatigue_score", 0.0)
 
-        parts = [base]
+        # Keep the engaging, evidence-led Socratic style consistent across
+        # learning modes, including review/quiz/supportive turns.
+        parts = [base, ENGAGING_SOCRATIC_STYLE]
 
         # ── Learning mode adaptation ──
         if ctx.learning_mode:
@@ -159,7 +161,6 @@ class TutorAgent(ReActMixin, BaseAgent):
                     relevant_keys = relevant_keys[:2]
                 frag_text = "\n\n".join(f"### {k}\n{fragments[k]}" for k in relevant_keys)
                 parts.append(f"\n## Teaching Strategies\n{frag_text}\n")
-            parts.append(SOCRATIC_GUARDRAILS)
             parts.append(_COMPREHENSION_PROBING)
 
         # ── Socratic engine directive (stateful FSM) ──

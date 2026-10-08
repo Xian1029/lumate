@@ -12,7 +12,7 @@ export const CARD_COLORS = [
 
 export function getDashboardNowMs() { return Date.now(); }
 
-const MODE_REC_SNOOZE_MS = 12 * 60 * 60 * 1000;
+const MODE_REC_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function getInitials(name: string) {
   return name
@@ -25,6 +25,35 @@ export function getInitials(name: string) {
 export function formatDate(value?: string | null) {
   if (!value) return null;
   return new Date(value).toLocaleDateString();
+}
+
+/** Convert internal scene identifiers into friendly UI copy without ever
+ * leaking backend enum values on the dashboard. */
+export function getFriendlySceneLabel(sceneId: string | null | undefined, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    study_session: "dashboard.scene.study",
+    review_session: "dashboard.scene.review",
+    review: "dashboard.scene.review",
+    exam_prep: "dashboard.scene.examPrep",
+    planning: "dashboard.scene.planning",
+    onboarding: "dashboard.scene.gettingStarted",
+    exploration: "dashboard.scene.exploration",
+  };
+  return t(labels[sceneId ?? ""] ?? "dashboard.scene.learning");
+}
+
+export function getFriendlyTaskType(taskType: string | null | undefined, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    weekly_prep: "dashboard.task.weeklyPrep",
+    exam_prep: "dashboard.task.examPrep",
+    wrong_answer_review: "dashboard.task.wrongAnswerReview",
+    assignment_analysis: "dashboard.task.assignment",
+    generate_quiz: "dashboard.task.quiz",
+    review_session: "dashboard.task.review",
+    guided_session: "dashboard.task.guided",
+    cross_course_review: "dashboard.task.crossCourse",
+  };
+  return t(labels[taskType ?? ""] ?? "dashboard.task.learning");
 }
 
 export function resolveNotificationPath(notification: AppNotification): string | null {
@@ -48,6 +77,34 @@ export function notificationMatchesTask(notification: AppNotification, taskId: s
     record.agent_task_id === taskId;
 }
 
+const HOME_INSIGHT_CATEGORIES = new Set([
+  "agent_insight",
+  "learning_suggestion",
+  "cross_course_insight",
+  "weekly_prep",
+]);
+
+/** Keep the home insight area focused on unique learning advice, not general notifications. */
+export function selectHomeAgentInsights(notifications: AppNotification[], limit = 3): AppNotification[] {
+  const seen = new Set<string>();
+  const selected: AppNotification[] = [];
+
+  for (const notification of notifications) {
+    if (notification.read || !HOME_INSIGHT_CATEGORIES.has(notification.category)) continue;
+    const key = [
+      notification.category,
+      notification.course_id ?? "global",
+      notification.title.trim().toLocaleLowerCase(),
+    ].join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(notification);
+    if (selected.length >= limit) break;
+  }
+
+  return selected;
+}
+
 export function getCourseMode(course: Course): LearningMode | undefined {
   if (typeof window === "undefined") return undefined;
   const localMode = getStoredSpaceLayoutMode(course.id);
@@ -55,6 +112,7 @@ export function getCourseMode(course: Course): LearningMode | undefined {
   const metadata = (course.metadata ?? {}) as Record<string, unknown>;
   const layout = metadata.spaceLayout as SpaceLayout | undefined;
   const mode = layout?.mode ?? metadata.learning_mode;
+  if (mode === "maintenance") return "self_paced";
   return typeof mode === "string" ? (mode as LearningMode) : undefined;
 }
 

@@ -2,22 +2,36 @@
 
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import func, literal, select
+from sqlalchemy import delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from config import settings
+from database import Base, get_db
 from models.agent_task import AgentTask
 from models.course import Course
 from models.content import CourseContentTree
 from models.chat_session import ChatSession
+from models.chat_message import ChatMessageLog
 from models.ingestion import IngestionJob
+from models.knowledge_graph import ConceptMastery, KnowledgeEdge, KnowledgeNode
+from models.practice import PracticeProblem, PracticeResult
 from models.study_goal import StudyGoal
+from models.learning_plan import LearningPlan, LearningPlanStatus
+from models.learning_task import LearningTask, LearningTaskStatus
 from models.user import User
 from schemas.course import CourseCreate, CourseOverviewCard, CourseResponse, ContentNodeResponse, CourseUpdate
 from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
+from services.upload_storage import resolve_upload_path
+from services.content_text import (
+    clean_course_text,
+    clean_course_title,
+    normalize_pdf_markdown,
+    split_embedded_heading_from_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +51,14 @@ def _serialize_content_tree(nodes: list[CourseContentTree]) -> list[ContentNodeR
     def build(node: CourseContentTree) -> ContentNodeResponse:
         return ContentNodeResponse(
             id=node.id,
-            title=node.title,
-            content=node.content,
+            # Defensive read-time cleanup protects courses imported before the
+            # ingestion fix was introduced.
+            title=clean_course_title(node.title),
+            content=clean_course_text(node.content),
             level=node.level,
             order_index=node.order_index,
             source_type=node.source_type,
+            source_file=getattr(node, "source_file", None),
             content_category=getattr(node, "content_category", None),
             children=[build(child) for child in by_parent.get(node.id, [])],
         )
@@ -64,7 +81,7 @@ async def get_or_create_user(db: AsyncSession) -> User:
 @router.get("/", response_model=list[CourseResponse], summary="List all courses", description="Return all courses for the current user, ordered by creation date.")
 async def list_courses(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Course).where(Course.user_id == user.id).order_by(Course.created_at.desc())
+        select(Course).where(Course.user_id == user.id, Course.status == "ACTIVE").order_by(Course.created_at.desc())
     )
     return result.scalars().all()
 
@@ -100,22 +117,25 @@ async def list_course_overview(
         .group_by(StudyGoal.course_id)
         .subquery()
     )
+    # These overview fields are learner-facing.  They must describe the
+    # authoritative LearningPlan domain, not technical AgentTask execution.
     pending_tasks = (
         select(
-            AgentTask.course_id.label("course_id"),
-            func.count(AgentTask.id).label("pending_task_count"),
+            LearningTask.course_id.label("course_id"),
+            func.count(LearningTask.id).label("pending_task_count"),
         )
-        .where(AgentTask.status.in_(("queued", "running", "resuming", "cancel_requested")), AgentTask.user_id == user.id)
-        .group_by(AgentTask.course_id)
+        .join(LearningPlan, LearningPlan.id == LearningTask.plan_id)
+        .where(LearningPlan.user_id == user.id, LearningPlan.status == LearningPlanStatus.ACTIVE.value, LearningTask.status.in_((LearningTaskStatus.PENDING.value, LearningTaskStatus.READY.value, LearningTaskStatus.IN_PROGRESS.value, LearningTaskStatus.POSTPONED.value, LearningTaskStatus.MISSED.value)))
+        .group_by(LearningTask.course_id)
         .subquery()
     )
     pending_approvals = (
         select(
-            AgentTask.course_id.label("course_id"),
-            func.count(AgentTask.id).label("pending_approval_count"),
+            LearningPlan.course_id.label("course_id"),
+            func.count(LearningPlan.id).label("pending_approval_count"),
         )
-        .where(AgentTask.status.in_(("awaiting_approval", "pending_approval")), AgentTask.user_id == user.id)
-        .group_by(AgentTask.course_id)
+        .where(LearningPlan.user_id == user.id, LearningPlan.status == LearningPlanStatus.PENDING_APPROVAL.value)
+        .group_by(LearningPlan.course_id)
         .subquery()
     )
     last_activity = (
@@ -158,7 +178,7 @@ async def list_course_overview(
         .outerjoin(pending_tasks, pending_tasks.c.course_id == Course.id)
         .outerjoin(pending_approvals, pending_approvals.c.course_id == Course.id)
         .outerjoin(last_activity, last_activity.c.course_id == Course.id)
-        .where(Course.user_id == user.id)
+        .where(Course.user_id == user.id, Course.status == "ACTIVE")
         .order_by(Course.updated_at.desc(), Course.created_at.desc())
     )
 
@@ -176,10 +196,50 @@ async def list_course_overview(
             pending_task_count=int(row.pending_task_count or 0),
             pending_approval_count=int(row.pending_approval_count or 0),
             last_agent_activity_at=row.last_agent_activity_at,
-            last_scene_id=row.last_scene_id,
+        last_scene_id=row.last_scene_id,
+            status="ACTIVE",
+            deleted_at=None,
         )
         for row in result.all()
     ]
+
+
+# These static paths are registered before /{course_id}, otherwise a UUID
+# parameter route would consume the word "trash".
+@router.get("/trash", response_model=list[CourseResponse], summary="List trashed learning spaces")
+async def list_trashed_courses(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.user_id == user.id, Course.status == "TRASHED").order_by(Course.deleted_at.desc()))
+    return result.scalars().all()
+
+
+@router.post("/trash/{course_id}/restore", response_model=CourseResponse, summary="Restore learning space")
+async def restore_course(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id, Course.status == "TRASHED"))
+    course = result.scalar_one_or_none()
+    if course is None:
+        from libs.exceptions import NotFoundError
+        raise NotFoundError("Trashed course", course_id)
+    course.status, course.deleted_at = "ACTIVE", None
+    await db.commit()
+    await db.refresh(course)
+    return course
+
+
+@router.delete("/trash/{course_id}", status_code=204, summary="Permanently delete trashed learning space")
+async def permanently_delete_trashed_course(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id, Course.status == "TRASHED"))
+    course = result.scalar_one_or_none()
+    if course is None:
+        from libs.exceptions import NotFoundError
+        raise NotFoundError("Trashed course", course_id)
+    await _purge_course(course_id, user, db)
+
+
+@router.delete("/trash", status_code=204, summary="Empty learning-space trash")
+async def empty_course_trash(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    ids = (await db.execute(select(Course.id).where(Course.user_id == user.id, Course.status == "TRASHED"))).scalars().all()
+    for course_id in ids:
+        await _purge_course(course_id, user, db)
 
 
 @router.post("/", response_model=CourseResponse, status_code=201, summary="Create a course", description="Create a new course for the current user.")
@@ -189,11 +249,49 @@ async def create_course(body: CourseCreate, user: User = Depends(get_current_use
         name=body.name,
         description=body.description,
         metadata_=body.metadata.model_dump(exclude_none=True) if body.metadata else None,
+        status=body.status,
     )
     db.add(course)
     await db.commit()
     await db.refresh(course)
     return course
+
+
+@router.post("/{course_id}/activate", response_model=CourseResponse, summary="Publish a parsed learning space")
+async def activate_course(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Make a successfully reviewed setup space visible to the learner."""
+    result = await db.execute(
+        select(Course).where(Course.id == course_id, Course.user_id == user.id, Course.status == "SETUP")
+    )
+    course = result.scalar_one_or_none()
+    if not course:
+        # ACTIVE is intentionally idempotent so a double click cannot fail the
+        # final step of an otherwise completed creation flow.
+        return await get_course_or_404(db, course_id, user_id=user.id)
+    course.status = "ACTIVE"
+    await db.commit()
+    await db.refresh(course)
+    return course
+
+
+@router.delete("/{course_id}/setup", status_code=204, summary="Cancel a provisional learning space")
+async def cancel_setup_course(
+    course_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove only an unpublished setup space and its unreferenced uploads."""
+    course = (await db.execute(select(Course).where(
+        Course.id == course_id, Course.user_id == user.id, Course.status == "SETUP"
+    ))).scalar_one_or_none()
+    if course is None:
+        from libs.exceptions import NotFoundError
+        raise NotFoundError("Provisional learning space", course_id)
+    await _purge_course(course_id, user, db)
 
 
 @router.get("/{course_id}", response_model=CourseResponse, summary="Get a course", description="Return a single course by ID for the current user.")
@@ -249,6 +347,8 @@ async def update_layout(
         body = {}
     if not isinstance(body, dict):
         body = {}
+    from services.workspace_layout import WorkspaceLayoutService
+    body = WorkspaceLayoutService.normalize(body)
     course = await get_course_or_404(db, course_id, user_id=user.id)
     metadata = dict(course.metadata_ or {})
     metadata["spaceLayout"] = body
@@ -271,6 +371,49 @@ async def get_content_tree(course_id: uuid.UUID, user: User = Depends(get_curren
         .order_by(CourseContentTree.level, CourseContentTree.order_index, CourseContentTree.created_at)
     )
     return _serialize_content_tree(result.scalars().all())
+
+
+@router.post("/{course_id}/repair-imported-text", summary="Repair imported course text")
+async def repair_imported_text(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Persistently remove invisible PDF extraction artefacts from one course.
+
+    This is idempotent and deliberately conservative: it only removes control
+    characters and invisible formatting marks, never rewrites lesson content.
+    """
+    await get_course_or_404(db, course_id, user_id=user.id)
+    result = await db.execute(
+        select(CourseContentTree).where(CourseContentTree.course_id == course_id)
+    )
+    repaired_nodes = 0
+    repaired_titles = 0
+    repaired_contents = 0
+    for node in result.scalars():
+        title, embedded_heading = split_embedded_heading_from_title(node.title)
+        content = normalize_pdf_markdown(node.content)
+        if embedded_heading:
+            content = normalize_pdf_markdown(f"{embedded_heading}\n\n{content or ''}")
+        changed = False
+        if title != node.title:
+            node.title = title
+            repaired_titles += 1
+            changed = True
+        if content != node.content:
+            node.content = content
+            repaired_contents += 1
+            changed = True
+        if changed:
+            repaired_nodes += 1
+
+    if repaired_nodes:
+        await db.commit()
+
+    return {
+        "status": "ok",
+        "course_id": str(course_id),
+        "repaired_nodes": repaired_nodes,
+        "repaired_titles": repaired_titles,
+        "repaired_contents": repaired_contents,
+    }
 
 
 @router.get("/{course_id}/course-info", summary="Get course info summary", description="Return structured course info: grading scheme, assignments, deadlines, quiz details.")
@@ -345,8 +488,88 @@ async def get_course_info(course_id: uuid.UUID, user: User = Depends(get_current
     }
 
 
-@router.delete("/{course_id}", status_code=204, summary="Delete a course", description="Permanently delete a course and its associated data.")
+async def _purge_course(course_id: uuid.UUID, user: User, db: AsyncSession) -> None:
+    """Transactionally remove a trashed course and all course-scoped data."""
+    # Purge operates on TRASHED rows, which the normal course-access helper
+    # intentionally hides from all learning routes.
+    course = (await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id))).scalar_one_or_none()
+    if course is None:
+        from libs.exceptions import NotFoundError
+        raise NotFoundError("Course", course_id)
+
+    # Some child tables do not carry course_id themselves.  Newer databases
+    # cascade these foreign keys, but older local SQLite databases may not.  In
+    # that case deleting the parent course used to fail with a foreign-key
+    # error, leaving the space visible. Clean these dependent rows first.
+    session_ids = select(ChatSession.id).where(ChatSession.course_id == course_id)
+    await db.execute(delete(ChatMessageLog).where(ChatMessageLog.session_id.in_(session_ids)))
+
+    problem_ids = select(PracticeProblem.id).where(PracticeProblem.course_id == course_id)
+    await db.execute(delete(PracticeResult).where(PracticeResult.problem_id.in_(problem_ids)))
+
+    knowledge_node_ids = select(KnowledgeNode.id).where(KnowledgeNode.course_id == course_id)
+    await db.execute(delete(ConceptMastery).where(ConceptMastery.knowledge_node_id.in_(knowledge_node_ids)))
+    await db.execute(
+        delete(KnowledgeEdge).where(
+            or_(
+                KnowledgeEdge.source_id.in_(knowledge_node_ids),
+                KnowledgeEdge.target_id.in_(knowledge_node_ids),
+            )
+        )
+    )
+
+    file_paths = set(
+        (await db.execute(
+            select(IngestionJob.file_path).where(
+                IngestionJob.course_id == course_id,
+                IngestionJob.file_path.is_not(None),
+            )
+        )).scalars().all()
+    )
+    other_paths = set(
+        (await db.execute(
+            select(IngestionJob.file_path).where(
+                IngestionJob.course_id != course_id,
+                IngestionJob.file_path.is_not(None),
+            )
+        )).scalars().all()
+    )
+    shared_files = {
+        resolved
+        for raw_path in other_paths
+        if (resolved := resolve_upload_path(raw_path, settings.upload_dir)) is not None
+    }
+
+    # Several legacy SQLite schemas predate ON DELETE CASCADE. Delete every
+    # course-scoped table in reverse dependency order so populated spaces can
+    # be removed atomically without leaving orphaned learning data.
+    for table in reversed(Base.metadata.sorted_tables):
+        if table.name == Course.__tablename__ or "course_id" not in table.c:
+            continue
+        await db.execute(delete(table).where(table.c.course_id == course_id))
+
+    await db.execute(
+        delete(Course).where(Course.id == course_id, Course.user_id == user.id)
+    )
+    await db.commit()
+
+    for raw_path in file_paths:
+        file_path = resolve_upload_path(raw_path, settings.upload_dir)
+        if file_path is None:
+            logger.warning("Skipped missing or unmanaged course file: %s", raw_path)
+            continue
+        if file_path in shared_files:
+            continue
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to remove deleted course file: %s", file_path)
+
+
+@router.delete("/{course_id}", status_code=204, summary="Move a course to trash", description="Recoverably move a learning space to trash.")
 async def delete_course(course_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     course = await get_course_or_404(db, course_id, user_id=user.id)
-    await db.delete(course)
-    await db.commit()
+    if course.status != "TRASHED":
+        course.status = "TRASHED"
+        course.deleted_at = datetime.now(timezone.utc)
+        await db.commit()

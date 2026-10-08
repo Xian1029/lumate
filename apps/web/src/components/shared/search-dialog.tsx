@@ -1,5 +1,6 @@
 "use client";
 
+import { t, tf } from "@/lib/i18n";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X, FileText, ArrowRight } from "lucide-react";
@@ -79,7 +80,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" onClick={handleClose} />
 
       {/* Dialog */}
-      <div ref={dialogRef} role="dialog" aria-label="Search notes and concepts" aria-modal="true" className="relative w-full max-w-lg mx-4 bg-card rounded-2xl card-shadow overflow-hidden animate-fade-in">
+      <div ref={dialogRef} role="dialog" aria-label={t("ui.search_notes_and_concepts")} aria-modal="true" className="relative w-full max-w-lg mx-4 bg-card rounded-2xl card-shadow overflow-hidden animate-fade-in">
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border/60">
           <Search className="size-4 text-muted-foreground shrink-0" />
@@ -88,23 +89,23 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search notes and concepts"
-            placeholder="Search notes, concepts..."
+            aria-label={t("ui.search_notes_and_concepts")}
+            placeholder={t("ui.search_notes_concepts")}
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
           />
           {query && (
-            <button onClick={() => setQuery("")} aria-label="Clear search" className="text-muted-foreground hover:text-foreground">
+            <button onClick={() => setQuery("")} aria-label={t("ui.clear_search")} className="text-muted-foreground hover:text-foreground">
               <X className="size-3.5" />
             </button>
           )}
-          <kbd className="text-[10px] text-muted-foreground border border-border/60 rounded-full px-1.5 py-0.5">ESC</kbd>
+          <kbd className="text-[10px] text-muted-foreground border border-border/60 rounded-full px-1.5 py-0.5">{t("ui.esc")}</kbd>
         </div>
 
         {/* Results */}
-        <div role="list" aria-label="Search results" className="max-h-[50vh] overflow-y-auto scrollbar-thin">
+        <div role="list" aria-label={t("ui.search_results")} className="max-h-[50vh] overflow-y-auto scrollbar-thin">
           {query.length >= 2 && results.length === 0 && (
             <div className="px-4 py-8 text-center">
-              <p className="text-sm text-muted-foreground">No results found for &quot;{query}&quot;</p>
+              <p className="text-sm text-muted-foreground">{tf("ui.no_search_results", { query })}</p>
             </div>
           )}
           {results.map((r) => (
@@ -131,7 +132,7 @@ export function SearchDialog({ open, onClose, courseId }: SearchDialogProps) {
           ))}
           {!query && (
             <div className="px-4 py-6 text-center">
-              <p className="text-xs text-muted-foreground">Type to search through your notes and concepts</p>
+              <p className="text-xs text-muted-foreground">{t("ui.type_to_search_through_your_notes_and_concepts")}</p>
             </div>
           )}
         </div>

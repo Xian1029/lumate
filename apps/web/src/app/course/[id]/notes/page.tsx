@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
+import { useWorkspaceStore } from "@/store/workspace";
 import { WorkspaceHeader } from "@/components/shell/workspace-header";
 import { NotesSection } from "@/components/sections/notes-section";
 import { ChatFab } from "@/components/chat/chat-fab";
@@ -13,6 +14,7 @@ import { ttlCache } from "@/lib/cache";
 
 export default function NotesPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const courseId = params.id as string;
   const [chatOpen, setChatOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(
@@ -20,6 +22,14 @@ export default function NotesPage() {
   );
 
   const { activeCourse, courses, fetchCourses, setActiveCourse } = useCourseStore();
+  const setSelectedNodeId = useWorkspaceStore((s) => s.setSelectedNodeId);
+
+  // Deep link support: /course/:id/notes?node=<contentNodeId> focuses the
+  // notes workspace on the unit a recommendation/task pointed at.
+  useEffect(() => {
+    const node = searchParams.get("node");
+    if (node) setSelectedNodeId(node);
+  }, [searchParams, setSelectedNodeId]);
 
   useEffect(() => {
     if (courses.length === 0) void fetchCourses();

@@ -86,11 +86,25 @@ class OnboardingAgent(BaseAgent):
 
     async def execute(self, ctx: AgentContext, db: AsyncSession) -> AgentContext:
         """Run one turn of the interview."""
+        language = str(ctx.metadata.get("response_language") or "zh").lower()
+        if not ctx.user_message.strip() and not ctx.conversation_history:
+            ctx.response = (
+                "嗨！想先了解一下：平时开始学习新内容时，你更喜欢先读一读、做笔记、看图，还是直接做题试试看？"
+                if language.startswith("zh")
+                else "Hi! When you start learning something new, do you prefer reading, taking notes, using visuals, or trying practice questions first?"
+            )
+            return ctx
+
         client = self.get_llm_client(ctx)
         partial_profile = ctx.metadata.get("learner_profile", {})
 
         # Build conversation for the LLM
         system = _ONBOARDING_SYSTEM
+        system += (
+            "\n\n## Required response language\nAlways respond in Simplified Chinese. Do not use English in user-visible text."
+            if language.startswith("zh")
+            else "\n\n## Required response language\nAlways respond in English."
+        )
         if partial_profile:
             system += (
                 "\n\n## Previously extracted (update, don't overwrite unless "

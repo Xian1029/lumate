@@ -90,7 +90,7 @@ export function FlashcardCard({
                 size="sm"
                 variant={rating.variant}
                 disabled={submitting}
-                aria-label={`Rate: ${rating.label} (press ${rating.value})`}
+                aria-label={`评分：${rating.label}（按键 ${rating.value}）`}
                 aria-keyshortcuts={String(rating.value)}
                 onClick={(e) => {
                   e.stopPropagation();

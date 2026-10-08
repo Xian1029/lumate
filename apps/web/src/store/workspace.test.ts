@@ -70,11 +70,46 @@ describe("useWorkspaceStore", () => {
       const blocks = useWorkspaceStore.getState().spaceLayout.blocks;
       expect(blocks).toHaveLength(1);
       expect(blocks[0].type).toBe("quiz");
-      expect(blocks[0].source).toBe("user");
+      expect(blocks[0].source).toBe("USER_ADDED");
     });
 
-    it("removes a block and supports undo", () => {
+    it("restores an existing hidden block instead of creating a duplicate", () => {
       useWorkspaceStore.getState().addBlock("quiz");
+      const quiz = useWorkspaceStore.getState().spaceLayout.blocks[0];
+      useWorkspaceStore.setState({
+        spaceLayout: {
+          ...useWorkspaceStore.getState().spaceLayout,
+          blocks: [{ ...quiz, isVisible: false }],
+        },
+      });
+
+      useWorkspaceStore.getState().addBlock("quiz");
+
+      const blocks = useWorkspaceStore.getState().spaceLayout.blocks;
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0]).toEqual(expect.objectContaining({ type: "quiz", isVisible: true }));
+    });
+
+    it("appends newly unlocked agent blocks after existing blocks", () => {
+      useWorkspaceStore.getState().addBlock("notes");
+      useWorkspaceStore.getState().addBlock("quiz");
+      useWorkspaceStore.getState().agentAddBlock(
+        "agent_insight",
+        { insightType: "feature_unlock", suggestedBlockType: "wrong_answers" },
+        {
+          reason: "Wrong answers unlocked",
+          needsApproval: true,
+          dismissible: true,
+        },
+      );
+
+      const blocks = useWorkspaceStore.getState().spaceLayout.blocks;
+      expect(blocks.map((block) => block.type)).toEqual(["notes", "quiz", "agent_insight"]);
+      expect(blocks.map((block) => block.position)).toEqual([0, 1, 2]);
+    });
+
+    it("removes an optional block and supports undo", () => {
+      useWorkspaceStore.getState().addBlock("review");
       const blockId = useWorkspaceStore.getState().spaceLayout.blocks[0].id;
 
       useWorkspaceStore.getState().removeBlock(blockId);
@@ -83,6 +118,47 @@ describe("useWorkspaceStore", () => {
 
       useWorkspaceStore.getState().undoRemoveBlock();
       expect(useWorkspaceStore.getState().spaceLayout.blocks).toHaveLength(1);
+    });
+
+    it("removes optional blocks and lets the learner add them again", () => {
+      useWorkspaceStore.getState().addBlock("quiz");
+      useWorkspaceStore.getState().addBlock("flashcards");
+      const [quiz, flashcards] = useWorkspaceStore.getState().spaceLayout.blocks;
+
+      useWorkspaceStore.getState().removeBlock(quiz.id);
+      useWorkspaceStore.getState().removeBlock(flashcards.id);
+
+      expect(useWorkspaceStore.getState().spaceLayout.blocks).toEqual([]);
+      useWorkspaceStore.getState().addBlock("quiz");
+      expect(useWorkspaceStore.getState().spaceLayout.blocks.map((block) => block.type)).toEqual(["quiz"]);
+    });
+
+    it("persists independent pin and visibility state", () => {
+      useWorkspaceStore.getState().addBlock("review");
+      const id = useWorkspaceStore.getState().spaceLayout.blocks[0].id;
+      useWorkspaceStore.getState().pinBlock(id);
+      expect(useWorkspaceStore.getState().spaceLayout.blocks[0]).toEqual(expect.objectContaining({ isPinned: true, isVisible: true }));
+      useWorkspaceStore.getState().unpinBlock(id);
+      useWorkspaceStore.getState().hideBlock(id);
+      expect(useWorkspaceStore.getState().spaceLayout.blocks[0]).toEqual(expect.objectContaining({ isPinned: false, isVisible: false }));
+      useWorkspaceStore.getState().showBlock(id);
+      expect(useWorkspaceStore.getState().spaceLayout.blocks[0].isVisible).toBe(true);
+    });
+
+    it("never removes required navigation or AI notes", () => {
+      useWorkspaceStore.setState({
+        spaceLayout: {
+          templateId: null,
+          columns: 2,
+          blocks: [
+            { id: "outline", type: "chapter_list", position: 0, size: "full", config: {}, isVisible: true, isPinned: false, source: "SYSTEM_REQUIRED" },
+            { id: "notes", type: "notes", position: 1, size: "full", config: {}, isVisible: true, isPinned: false, source: "SYSTEM_REQUIRED" },
+          ],
+        },
+      });
+      useWorkspaceStore.getState().removeBlock("outline");
+      useWorkspaceStore.getState().removeBlock("notes");
+      expect(useWorkspaceStore.getState().spaceLayout.blocks).toHaveLength(2);
     });
 
     it("resizes a block", () => {

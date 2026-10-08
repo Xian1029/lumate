@@ -171,7 +171,13 @@ async def check_prerequisite_gaps(
             ConceptMastery.knowledge_node_id.in_(node_ids),
         )
     )
-    masteries = {m.knowledge_node_id: m.mastery_score for m in mastery_result.scalars().all()}
+    mastery_by_node = {m.knowledge_node_id: m for m in mastery_result.scalars().all()}
+
+    def has_learning_evidence(node_id: uuid.UUID) -> bool:
+        mastery = mastery_by_node.get(node_id)
+        return bool(mastery and (mastery.practice_count > 0 or mastery.last_practiced_at is not None))
+
+    masteries = {node_id: mastery.mastery_score for node_id, mastery in mastery_by_node.items()}
 
     # Determine which concepts to check
     if failed_concept_names:
@@ -182,7 +188,13 @@ async def check_prerequisite_gaps(
         ]
     else:
         # Check all concepts with low mastery
-        target_ids = [n.id for n in nodes if masteries.get(n.id, 0.0) < 0.5]
+        # Missing mastery rows mean "not assessed yet", not a zero score.
+        # Only inspect concepts where the learner has actual response/review
+        # evidence, otherwise every untouched graph node appears weak.
+        target_ids = [
+            n.id for n in nodes
+            if has_learning_evidence(n.id) and masteries.get(n.id, 0.0) < 0.5
+        ]
 
     # Walk prerequisite edges and collect gaps
     gaps: dict[uuid.UUID, dict] = {}
@@ -194,7 +206,11 @@ async def check_prerequisite_gaps(
         visited.add(node_id)
         for prereq_id in prereq_map.get(node_id, []):
             prereq_mastery = masteries.get(prereq_id, 0.0)
-            if prereq_mastery < mastery_threshold and prereq_id in node_by_id:
+            if (
+                prereq_id in node_by_id
+                and has_learning_evidence(prereq_id)
+                and prereq_mastery < mastery_threshold
+            ):
                 prereq_node = node_by_id[prereq_id]
                 gaps[prereq_id] = {
                     "concept": prereq_node.name,

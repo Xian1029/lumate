@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import asdict
 import logging
 import time
@@ -35,16 +34,31 @@ def _turn_elapsed_seconds(ctx: AgentContext) -> float:
     return max(0.0, time.time() - ctx.created_at)
 
 
+def _compact_evidence_labels(values: list[str]) -> list[str]:
+    """Turn noisy retrieval facets into a small, human-readable concept list."""
+    labels: list[str] = []
+    for raw in values:
+        # Search facets may concatenate overlapping tokens ("有理数 有理").
+        # Split them, prefer the more specific term, and remove substrings.
+        candidates = sorted({part.strip() for part in raw.split() if part.strip()}, key=len, reverse=True)
+        for candidate in candidates:
+            if len(candidate) < 2 or any(candidate in seen for seen in labels):
+                continue
+            labels = [seen for seen in labels if seen not in candidate]
+            labels.append(candidate)
+    return labels[:6]
+
+
 def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
     groups: dict[str, dict] = {}
 
     for doc in content_docs[:5]:
         if not isinstance(doc, dict):
             continue
-        facets = [str(item) for item in (doc.get("matched_facets") or []) if item]
-        terms = [str(item) for item in (doc.get("matched_terms") or []) if item]
+        facets = _compact_evidence_labels([str(item) for item in (doc.get("matched_facets") or []) if item])
+        terms = _compact_evidence_labels([str(item) for item in (doc.get("matched_terms") or []) if item])
         source_file = str(doc.get("source_file") or "").strip()
-        label = facets[0] if facets else (terms[0] if terms else str(doc.get("title") or "Course evidence").strip())
+        label = facets[0] if facets else (terms[0] if terms else "Course material")
         normalized_label = label.lower()[:120]
         key = f"{source_file}|{normalized_label}"
 
@@ -52,17 +66,12 @@ def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
         if group is None:
             group = {
                 "label": label,
-                "titles": [],
-                "matched_terms": [],
+            "matched_terms": [],
                 "matched_facets": [],
                 "section_count": 0,
                 "summary_candidates": [],
             }
             groups[key] = group
-
-        title = str(doc.get("title") or "").strip()
-        if title and title not in group["titles"]:
-            group["titles"].append(title)
 
         for item in facets:
             if item not in group["matched_facets"]:
@@ -72,23 +81,21 @@ def _build_content_evidence_groups(content_docs: list[dict]) -> list[dict]:
             if item not in group["matched_terms"]:
                 group["matched_terms"].append(item)
 
-        summary = str(doc.get("evidence_summary") or doc.get("content") or "").strip()
-        if summary:
-            group["summary_candidates"].append(summary)
-
         group["section_count"] += int(doc.get("section_hit_count") or 1)
 
     ranked_groups: list[dict] = []
     for group in groups.values():
-        summary_counts = Counter(group.pop("summary_candidates", []))
-        summary = summary_counts.most_common(1)[0][0] if summary_counts else ""
+        group.pop("summary_candidates", None)
         ranked_groups.append({
             "label": group["label"],
-            "titles": group["titles"][:3],
+            "titles": [],
             "matched_terms": group["matched_terms"][:6],
             "matched_facets": group["matched_facets"][:4],
             "section_count": group["section_count"],
-            "summary": summary[:320] if summary else None,
+            # Never send raw PDF-extracted snippets back to the UI. They are
+            # available to the model after normalization, but are often not
+            # human-readable when the source contains complex page layout.
+            "summary": None,
         })
 
     ranked_groups.sort(

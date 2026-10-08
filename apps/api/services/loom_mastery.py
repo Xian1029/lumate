@@ -12,6 +12,8 @@ Academic foundations:
 
 import logging
 import uuid
+import re
+from difflib import SequenceMatcher
 from collections import deque
 from datetime import datetime, timezone
 
@@ -85,6 +87,7 @@ async def update_concept_mastery(
     course_id: uuid.UUID,
     correct: bool,
     question_type: str | None = None,
+    content_node_id: uuid.UUID | None = None,
 ) -> ConceptMastery | None:
     """Update mastery score for a concept after practice/quiz.
 
@@ -94,15 +97,36 @@ async def update_concept_mastery(
     - Free-response correct (guess=0.05) strongly increases mastery
     - Incorrect on T/F (slip=0.10) doesn't overly punish high-mastery students
     """
-    # Find the concept node
-    result = await db.execute(
-        select(KnowledgeNode).where(
-            KnowledgeNode.course_id == course_id,
-            func.lower(KnowledgeNode.name) == concept_name.lower(),
+    # Resolve graph concepts defensively. Generated practice text can differ
+    # from graph labels only by punctuation, whitespace, or a short qualifier;
+    # requiring byte-for-byte equality caused valid reviews to be discarded.
+    result = await db.execute(select(KnowledgeNode).where(KnowledgeNode.course_id == course_id))
+    candidates = result.scalars().all()
+
+    try:
+        concept_uuid = uuid.UUID(str(concept_name))
+    except (ValueError, TypeError, AttributeError):
+        concept_uuid = None
+
+    node = next((item for item in candidates if concept_uuid and item.id == concept_uuid), None)
+    normalize = lambda value: re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(value).casefold())
+    target = normalize(concept_name)
+    if node is None and target:
+        node = next((item for item in candidates if normalize(item.name) == target), None)
+    if node is None and target:
+        scoped = [item for item in candidates if content_node_id and item.content_node_id == content_node_id]
+        pool = scoped or candidates
+        scored = sorted(
+            ((max(
+                SequenceMatcher(None, target, normalize(item.name)).ratio(),
+                0.9 if target in normalize(item.name) or normalize(item.name) in target else 0.0,
+            ), item) for item in pool if normalize(item.name)),
+            key=lambda pair: pair[0], reverse=True,
         )
-    )
-    node = result.scalar_one_or_none()
+        if scored and scored[0][0] >= 0.72:
+            node = scored[0][1]
     if not node:
+        logger.info("No graph concept match for '%s' in course %s", concept_name, course_id)
         return None
 
     # Get or create mastery record

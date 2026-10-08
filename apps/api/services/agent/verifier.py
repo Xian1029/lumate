@@ -69,6 +69,9 @@ _STOPWORDS = {
     "show", "study", "tell", "that", "the", "this", "to", "what", "why", "with", "you",
 }
 
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LATIN_WORD_RE = re.compile(r"\b[A-Za-z]{2,}\b")
+
 
 @dataclass
 class VerificationIssue:
@@ -98,6 +101,25 @@ def _salient_terms(text: str) -> set[str]:
 def _looks_like_generic_nonanswer(response: str) -> bool:
     lowered = response.lower()
     return any(pattern in lowered for pattern in _GENERIC_NONANSWER_PATTERNS)
+
+
+def _language_mismatch(response: str, expected_language: str) -> bool:
+    """Detect an answer dominated by the wrong language, ignoring code and links."""
+    prose = re.sub(r"```[\s\S]*?```", "", response or "")
+    prose = re.sub(r"`[^`]*`", "", prose)
+    prose = re.sub(r"https?://\S+", "", prose)
+    cjk_count = len(_CJK_RE.findall(prose))
+    latin_word_count = len(_LATIN_WORD_RE.findall(prose))
+
+    if expected_language.lower().startswith("zh"):
+        # Permit necessary proper nouns and short English terms, but reject prose
+        # whose readable content is predominantly English.
+        return latin_word_count >= 10 and (
+            cjk_count < 8 or latin_word_count > cjk_count * 0.75
+        )
+    if expected_language.lower().startswith("en"):
+        return cjk_count >= 12 and latin_word_count < cjk_count * 0.35
+    return False
 
 
 def _collect_evidence_terms(ctx: AgentContext, limit: int = 18) -> list[str]:
@@ -156,6 +178,12 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
     evidence_terms = set(signals.get("evidence_terms") or [])
     evidence_overlap = set(signals.get("evidence_overlap_terms") or [])
     evidence_coverage = float(signals.get("evidence_coverage") or 0.0)
+
+    if response and _language_mismatch(response, ctx.response_language):
+        return VerificationIssue(
+            code="response_language_mismatch",
+            message=f"The final answer must use the requested language: {ctx.response_language}.",
+        )
 
     if ctx.intent in (IntentType.LEARN, IntentType.GENERAL):
         if (
@@ -293,8 +321,10 @@ def _find_issue(ctx: AgentContext, signals: dict[str, object]) -> VerificationIs
 async def _repair_response(agent: BaseAgent, ctx: AgentContext, issue: VerificationIssue) -> bool:
     client = agent.get_llm_client()
     system_prompt = agent.build_system_prompt(ctx)
+    target_language = "简体中文" if ctx.response_language.startswith("zh") else "English"
     repair_prompt = (
         "Revise the prior answer so it satisfies the verifier.\n"
+        f"Mandatory output language: {target_language}. Use it for all natural-language prose.\n"
         f"Verifier issue: {issue.code} — {issue.message}\n\n"
         f"User request:\n{ctx.user_message}\n\n"
         f"Current answer:\n{ctx.response}\n\n"
@@ -339,6 +369,13 @@ async def verify_and_repair(ctx: AgentContext, agent: BaseAgent) -> AgentContext
                 )
             )
             return ctx
+
+    # Never expose an answer in the wrong language when model-side repair fails.
+    if issue.code == "response_language_mismatch":
+        if ctx.response_language.startswith("zh"):
+            ctx.response = "抱歉，本次回答未能正确转换为中文。请重新发送问题，我会全程使用中文回答。"
+        else:
+            ctx.response = "Sorry, this answer could not be converted to English. Please try again."
 
     ctx.metadata["verifier"] = asdict(
         AgentVerificationResult(

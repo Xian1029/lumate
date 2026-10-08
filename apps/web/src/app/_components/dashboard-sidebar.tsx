@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Sparkles, Settings } from "lucide-react";
+import { Sparkles, Settings } from "lucide-react";
 import type { HealthStatus } from "@/lib/api";
 
 export function DashboardSidebar({
@@ -14,11 +14,16 @@ export function DashboardSidebar({
 }) {
   return (
     <aside className="w-full shrink-0 border-b border-border/60 bg-card p-4 md:w-[220px] md:border-b-0 md:border-r md:flex md:flex-col md:gap-6 md:p-5">
-      <div className="flex items-center gap-2.5 px-1 py-1">
-        <div className="size-8 rounded-xl bg-brand flex items-center justify-center">
-          <BookOpen className="size-4 text-brand-foreground" />
+      <div className="flex items-center gap-2.5 px-1 py-1" aria-label={t("brand.name")}>
+        <div className="flex size-9 items-center justify-center rounded-xl bg-brand text-lg font-black text-brand-foreground shadow-sm">
+          {t("brand.mark")}
         </div>
-        <span className="text-base font-bold text-foreground tracking-tight">OpenTutor</span>
+        <div className="min-w-0 leading-none">
+          <div className="text-base font-bold tracking-tight text-foreground">{t("brand.name")}</div>
+          {t("brand.name") !== "Lumate" && (
+            <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Lumate</div>
+          )}
+        </div>
       </div>
       <nav className="mt-3 flex flex-wrap gap-1 md:mt-2 md:flex-col">
         <span className="px-3 py-2.5 rounded-xl text-sm font-medium bg-brand-muted text-brand flex items-center gap-2">

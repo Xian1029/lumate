@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,10 @@ class CourseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     metadata: CourseMetadata | None = None
+    # SETUP is an internal, non-visible staging state used while uploaded
+    # material is being checked.  It becomes ACTIVE only after the learner
+    # confirms the parsing result.
+    status: Literal["ACTIVE", "SETUP"] = "ACTIVE"
 
 
 class CourseUpdate(BaseModel):
@@ -55,6 +59,8 @@ class CourseResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
+    status: str = "ACTIVE"
+    deleted_at: datetime | None = None
 
     model_config = {"from_attributes": True, "populate_by_name": True}
 
@@ -73,6 +79,8 @@ class CourseOverviewCard(BaseModel):
     pending_approval_count: int
     last_agent_activity_at: datetime | None
     last_scene_id: str | None
+    status: str = "ACTIVE"
+    deleted_at: datetime | None = None
 
 
 class ContentNodeResponse(BaseModel):
@@ -82,6 +90,7 @@ class ContentNodeResponse(BaseModel):
     level: int
     order_index: int
     source_type: str
+    source_file: str | None = None
     content_category: str | None = None
     children: list["ContentNodeResponse"] = []
 

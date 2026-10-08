@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import Image from "next/image";
 import type { ImageAttachment } from "@/lib/api";
 import { X } from "lucide-react";
@@ -17,7 +18,7 @@ export function ImagePreviewStrip({ images, onRemove }: ImagePreviewStripProps) 
   if (images.length === 0) return null;
 
   return (
-    <div role="list" aria-label="Attached images" className="mb-2 flex gap-2 overflow-x-auto scrollbar-thin pb-1">
+    <div role="list" aria-label={t("ui.attached_images")} className="mb-2 flex gap-2 overflow-x-auto scrollbar-thin pb-1">
       {images.map((img, i) => (
         <div
           key={`${img.filename ?? "img"}-${i}`}
@@ -36,7 +37,7 @@ export function ImagePreviewStrip({ images, onRemove }: ImagePreviewStripProps) 
             type="button"
             onClick={() => onRemove(i)}
             className="absolute -top-1.5 -right-1.5 rounded-full bg-destructive text-destructive-foreground p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-            aria-label="Remove image"
+            aria-label={t("ui.remove_image")}
           >
             <X className="size-3" />
           </button>

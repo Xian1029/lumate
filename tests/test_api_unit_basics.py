@@ -416,6 +416,65 @@ async def test_build_knowledge_graph_maps_mastery_payload(monkeypatch):
     ]
 
 
+def test_knowledge_graph_relationship_normalization_prefers_explanatory_edges():
+    from services.knowledge.graph import _normalize_relationship_edges
+
+    assert _normalize_relationship_edges([
+        {"source": "later", "target": "earlier", "type": "prerequisite"},
+        {"source": "later", "target": "earlier", "type": "related"},
+        {"source": "later", "target": "earlier", "type": "prerequisite"},
+        {"source": "earlier", "target": "next", "type": "curriculum_sequence"},
+        {"source": "earlier", "target": "next", "type": "related"},
+    ]) == [
+        {"source": "later", "target": "earlier", "type": "prerequisite"},
+        {"source": "earlier", "target": "next", "type": "curriculum_sequence"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_knowledge_graph_falls_back_to_course_outline(monkeypatch):
+    from services.knowledge import graph as graph_service
+
+    course_id = uuid.uuid4()
+    chapter_id = uuid.uuid4()
+    section_id = uuid.uuid4()
+
+    async def _empty_mastery_graph(_db, _user_id, _course_id):
+        return {"nodes": [], "edges": []}
+
+    chapter = SimpleNamespace(
+        id=chapter_id,
+        parent_id=None,
+        title="第一章 有理数",
+        content="正数、负数和数轴",
+        content_category="chapter",
+        level=1,
+    )
+    section = SimpleNamespace(
+        id=section_id,
+        parent_id=chapter_id,
+        title="1.1 正数和负数",
+        content="认识正数和负数",
+        content_category="section",
+        level=2,
+    )
+    scalar_result = MagicMock()
+    scalar_result.all.return_value = [chapter, section]
+    query_result = MagicMock()
+    query_result.scalars.return_value = scalar_result
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=query_result)
+
+    monkeypatch.setattr(graph_service, "get_mastery_graph", _empty_mastery_graph)
+    result = await graph_service.build_knowledge_graph(db, course_id, uuid.uuid4())
+
+    # The fallback represents concrete learnable units, not a duplicate list
+    # of chapter containers; outline numbering stays in the source tree.
+    assert [node["label"] for node in result["nodes"]] == ["正数和负数"]
+    assert all(node["status"] == "not_started" for node in result["nodes"])
+    assert result["edges"] == []
+
+
 @pytest.mark.asyncio
 async def test_get_next_action_falls_back_to_failed_task(monkeypatch):
     user = SimpleNamespace(id=uuid.uuid4())
@@ -733,6 +792,8 @@ async def test_diagnose_from_pair_reuses_existing_diagnosis():
         id=uuid.uuid4(),
         diagnosis="trap_vulnerability",
         mastered=True,
+        user_answer=None,
+        explanation=None,
     )
     result = MagicMock()
     result.scalar_one_or_none.return_value = wa

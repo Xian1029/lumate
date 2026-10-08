@@ -103,6 +103,16 @@ export function stabilizeMermaidCode(code: string): string {
   return normalized;
 }
 
+/** Avoid a blank Mermaid canvas for diagrams that contain only a root/header. */
+export function hasRenderableMermaidContent(code: string): boolean {
+  const normalized = stabilizeMermaidCode(code);
+  const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines[0]?.toLowerCase() === "mindmap") {
+    return lines.some((line) => !line.startsWith("mindmap") && !line.startsWith("root("));
+  }
+  return lines.length > 1;
+}
+
 export function stabilizeMarkdownMermaidBlocks(markdown: string): string {
   return normalizeLineEndings(markdown).replace(MERMAID_FENCE_RE, (_match, code: string) => {
     const stabilized = stabilizeMermaidCode(code);
@@ -117,4 +127,3 @@ export function buildMermaidFallbackText(code: string): string {
   }
   return normalized;
 }
-

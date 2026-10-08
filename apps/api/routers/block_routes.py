@@ -48,7 +48,7 @@ async def record_events(
             course_uuid = uuid.UUID(event.course_id)
         except ValueError:
             continue
-        await record_block_event(
+        was_recorded = await record_block_event(
             db=db,
             user_id=user.id,
             course_id=course_uuid,
@@ -56,7 +56,8 @@ async def record_events(
             block_type=event.block_type,
             metadata={"duration_ms": event.duration_ms} if event.duration_ms else None,
         )
-        recorded += 1
+        if was_recorded:
+            recorded += 1
 
     await db.commit()
     return {"recorded": recorded}

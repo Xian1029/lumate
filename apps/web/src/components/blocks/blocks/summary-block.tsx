@@ -5,6 +5,7 @@ import { useT } from "@/lib/i18n-context";
 import { getCourseProgress, getReviewSession } from "@/lib/api";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import type { BlockComponentProps } from "@/lib/block-system/registry";
+import { useWorkspaceStore } from "@/store/workspace";
 
 interface DigestItem {
   label: string;
@@ -17,6 +18,7 @@ export default function SummaryBlock({ courseId }: BlockComponentProps) {
   const [items, setItems] = useState<DigestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const analyticsRefreshKey = useWorkspaceStore((state) => state.sectionRefreshKey.analytics);
 
   const fetchDigest = useCallback(async () => {
     setLoading(true);
@@ -28,19 +30,24 @@ export default function SummaryBlock({ courseId }: BlockComponentProps) {
       ]);
 
       const built: DigestItem[] = [];
+      const learningProgress = progress.learning_progress ?? {
+        completed_learning_items: progress.mastered,
+        total_learning_items: progress.total_nodes,
+        progress_percent: progress.completion_percent,
+      };
 
       built.push({
         label: t("summary.mastery"),
         value: `${Math.round((progress.average_mastery ?? 0) * 100)}%`,
-        sub: progress.completion_percent != null
-          ? t("summary.completion").replace("{n}", String(Math.round(progress.completion_percent)))
+        sub: learningProgress.progress_percent != null
+          ? t("summary.completion").replace("{n}", String(Math.round(learningProgress.progress_percent)))
           : undefined,
       });
 
       built.push({
         label: t("summary.mastered"),
-        value: progress.mastered ?? 0,
-        sub: t("summary.masteredOf").replace("{total}", String(progress.total_nodes ?? 0)),
+        value: learningProgress.completed_learning_items,
+        sub: t("summary.masteredOf").replace("{total}", String(learningProgress.total_learning_items)),
       });
 
       if (reviewSession != null) {
@@ -72,7 +79,7 @@ export default function SummaryBlock({ courseId }: BlockComponentProps) {
 
   useEffect(() => {
     void fetchDigest();
-  }, [fetchDigest]);
+  }, [fetchDigest, analyticsRefreshKey]);
 
   if (loading) {
     return (

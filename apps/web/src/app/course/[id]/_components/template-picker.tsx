@@ -17,17 +17,17 @@ export function TemplatePicker({
         {t("course.template.subtitle")}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {TEMPLATE_LIST.map((t) => (
+        {TEMPLATE_LIST.map((template) => (
           <button
             type="button"
-            key={t.id}
-            onClick={() => onApplyTemplate(t.id)}
+            key={template.id}
+            onClick={() => onApplyTemplate(template.id)}
             className="p-5 rounded-2xl bg-card card-lift text-left group"
           >
-            <p className="text-sm font-medium text-foreground">{t.name}</p>
-            <p className="text-xs text-muted-foreground mt-1">{t.description}</p>
+            <p className="text-sm font-medium text-foreground">{t(template.nameKey)}</p>
+            <p className="text-xs text-muted-foreground mt-1">{t(template.descriptionKey)}</p>
             <div className="flex gap-1 mt-2 flex-wrap">
-              {t.blocks
+              {template.blocks
                 .filter((b) => b.type !== "chapter_list")
                 .map((b, i) => (
                   <span

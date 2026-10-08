@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import {
   BarChart,
   Bar,
@@ -25,7 +26,7 @@ interface QuizActivityChartProps {
 export function QuizActivityChart({ data }: QuizActivityChartProps) {
   return (
     <section className="rounded-xl border border-border bg-card p-4">
-      <h2 className="font-medium mb-4 text-foreground">Quiz Activity (last 30 days)</h2>
+      <h2 className="font-medium mb-4 text-foreground">{t("ui.quiz_activity_last_30_days")}</h2>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>

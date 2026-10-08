@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
@@ -14,10 +15,10 @@ import type { LearningMode } from "@/lib/block-system/types";
 import { getStoredSpaceLayoutMode } from "@/lib/block-system/layout-storage";
 
 function asLearningMode(value: unknown): LearningMode | undefined {
+  if (value === "maintenance") return "self_paced";
   return value === "course_following" ||
     value === "self_paced" ||
-    value === "exam_prep" ||
-    value === "maintenance"
+    value === "exam_prep"
     ? value
     : undefined;
 }
@@ -33,6 +34,7 @@ export default function PlanPage() {
 
   const { activeCourse, courses, fetchCourses, setActiveCourse } = useCourseStore();
   const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
+  const selectedNodeId = useWorkspaceStore((s) => s.selectedNodeId);
 
   useEffect(() => {
     if (courses.length === 0) void fetchCourses();
@@ -48,6 +50,7 @@ export default function PlanPage() {
       .then((d) => { ttlCache.set("course:health", d, 30_000); setHealth(d); })
       .catch((e) => console.error("[Plan] health check failed:", e));
   }, []);
+
 
   const course = activeCourse ?? courses.find((c) => c.id === courseId) ?? null;
   const resolvedMode = useMemo(() => {
@@ -71,16 +74,21 @@ export default function PlanPage() {
   const aiActionsEnabled =
     health?.llm_status !== "mock_fallback" &&
     health?.llm_status !== "configuration_required";
+  const returnNodeId = selectedNodeId;
+  const courseReturnHref = returnNodeId
+    ? `/course/${courseId}?node=${encodeURIComponent(returnNodeId)}`
+    : `/course/${courseId}`;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || "Study Plan"} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("ui.study_plan")} courseId={courseId} backHref={courseReturnHref} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
         <PlanSection
           courseId={courseId}
           aiActionsEnabled={aiActionsEnabled}
           learningMode={resolvedMode}
           defaultTab={defaultTab}
+          exitHref={courseReturnHref}
         />
       </main>
       <ChatFab open={chatOpen} onToggle={() => setChatOpen((v) => !v)} />

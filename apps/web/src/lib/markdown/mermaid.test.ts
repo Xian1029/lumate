@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMermaidFallbackText,
+  hasRenderableMermaidContent,
   stabilizeMarkdownMermaidBlocks,
   stabilizeMermaidCode,
 } from "./mermaid";
@@ -82,3 +83,12 @@ describe("buildMermaidFallbackText", () => {
   });
 });
 
+describe("hasRenderableMermaidContent", () => {
+  it("rejects a mindmap that would render as an empty root", () => {
+    expect(hasRenderableMermaidContent("mindmap\n  root((Topic))")).toBe(false);
+  });
+
+  it("accepts a mindmap with a visible branch", () => {
+    expect(hasRenderableMermaidContent("mindmap\n  root((Topic))\n    Branch")).toBe(true);
+  });
+});

@@ -14,6 +14,9 @@ const FlashcardView = lazy(() =>
 const ReviewView = lazy(() =>
   import("./practice/review-view").then((m) => ({ default: m.ReviewView })),
 );
+const FlashcardReviewView = lazy(() =>
+  import("./practice/flashcard-review-view").then((m) => ({ default: m.FlashcardReviewView })),
+);
 interface PracticeSectionProps {
   courseId: string;
   showReview?: boolean;
@@ -21,6 +24,9 @@ interface PracticeSectionProps {
   defaultTab?: PracticeTab;
   quizDifficultyHint?: "easy" | "medium" | "hard";
   quizModeHint?: "course_following" | "self_paced" | "exam_prep" | "maintenance";
+  scope?: "all" | "quiz" | "flashcards";
+  quizExitHref?: string;
+  flashcardExitHref?: string;
 }
 
 type PracticeTab = "quiz" | "flashcards" | "review";
@@ -32,6 +38,9 @@ export function PracticeSection({
   defaultTab = "quiz",
   quizDifficultyHint,
   quizModeHint,
+  scope = "all",
+  quizExitHref,
+  flashcardExitHref,
 }: PracticeSectionProps) {
   const t = useT();
   const allTabs: TabDef<PracticeTab>[] = useMemo(
@@ -43,8 +52,11 @@ export function PracticeSection({
     [t],
   );
   const tabs = useMemo(
-    () => (showReview ? allTabs : allTabs.filter((tab) => tab.id !== "review")),
-    [showReview, allTabs],
+    () => allTabs.filter((tab) => {
+      if (tab.id === "review") return showReview;
+      return scope === "all" || tab.id === scope;
+    }),
+    [showReview, scope, allTabs],
   );
 
   const practiceActiveTab = useWorkspaceStore((s) => s.practiceActiveTab) as PracticeTab | null;
@@ -53,7 +65,7 @@ export function PracticeSection({
   }, []);
 
   return (
-    <div role="region" aria-label="Practice">
+    <div role="region" aria-label={t("ui.practice")} className="h-full min-h-0 overflow-hidden flex flex-col">
     <TabbedSection
       tabs={tabs}
       defaultTab={tabs.some((t) => t.id === defaultTab) ? defaultTab : "quiz"}
@@ -69,10 +81,18 @@ export function PracticeSection({
               aiActionsEnabled={aiActionsEnabled}
               modeHint={quizModeHint}
               difficultyHint={quizDifficultyHint}
+              exitHref={quizExitHref}
             />
           ) : null}
-          {activeTab === "flashcards" ? <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
-          {activeTab === "review" && showReview ? <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} /> : null}
+          {activeTab === "flashcards" ? (
+            <FlashcardView courseId={courseId} aiActionsEnabled={aiActionsEnabled} exitHref={flashcardExitHref} />
+          ) : null}
+          {activeTab === "review" && showReview && scope !== "flashcards" ? (
+            <ReviewView courseId={courseId} aiActionsEnabled={aiActionsEnabled} />
+          ) : null}
+          {activeTab === "review" && showReview && scope === "flashcards" ? (
+            <FlashcardReviewView courseId={courseId} />
+          ) : null}
         </>
       )}
     </TabbedSection>

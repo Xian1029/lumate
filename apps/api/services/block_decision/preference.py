@@ -46,23 +46,31 @@ async def record_block_event(
     event_type: str,
     block_type: str,
     metadata: dict | None = None,
-) -> None:
-    """Record a block interaction event as a PreferenceSignal."""
+) -> bool:
+    """Record a block interaction event without poisoning the caller transaction.
+
+    Engagement telemetry is best-effort. A stale course id can legitimately be
+    delivered after a course was deleted, so isolate the insert in a savepoint
+    and let the product request continue when that optional write is rejected.
+    """
     try:
         from models.preference import PreferenceSignal
 
-        signal = PreferenceSignal(
-            user_id=user_id,
-            course_id=course_id,
-            signal_type="behavior",
-            dimension=f"block_{event_type}",
-            value=block_type,
-            context=metadata or {},
-        )
-        db.add(signal)
-        await db.flush()
+        async with db.begin_nested():
+            signal = PreferenceSignal(
+                user_id=user_id,
+                course_id=course_id,
+                signal_type="behavior",
+                dimension=f"block_{event_type}",
+                value=block_type,
+                context=metadata or {},
+            )
+            db.add(signal)
+            await db.flush()
+        return True
     except Exception as e:
         logger.warning("Failed to record block event: %s", e)
+        return False
 
 
 # Onboarding preference dimension -> block types they boost

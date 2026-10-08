@@ -4,25 +4,38 @@ import zh from "@/locales/zh.json";
 export type Locale = "en" | "zh";
 
 const SUPPORTED_LOCALES: Locale[] = ["en", "zh"];
+const LOCALE_STORAGE_KEY = "opentutor-locale";
+// Kept for users of earlier builds that stored the same preference under this key.
+const LEGACY_LOCALE_STORAGE_KEY = "opentutor_locale";
 
 const translations: Record<Locale, Record<string, string>> = { en, zh };
 
-let currentLocale: Locale = "en";
+let currentLocale: Locale = "zh";
 
 export function setLocale(locale: Locale): void {
   currentLocale = locale;
   if (typeof window !== "undefined") {
-    try { localStorage.setItem("opentutor-locale", locale); } catch { /* quota */ }
+    try {
+      localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+      localStorage.removeItem(LEGACY_LOCALE_STORAGE_KEY);
+    } catch { /* quota */ }
   }
 }
 
+function systemLocale(): Locale {
+  if (typeof navigator === "undefined") return "zh";
+  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
+function savedLocale(): Locale | null {
+  if (typeof window === "undefined") return null;
+  const saved = (localStorage.getItem(LOCALE_STORAGE_KEY)
+    ?? localStorage.getItem(LEGACY_LOCALE_STORAGE_KEY)) as Locale | null;
+  return saved && SUPPORTED_LOCALES.includes(saved) ? saved : null;
+}
+
 export function getLocale(): Locale {
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("opentutor-locale") as Locale | null;
-    if (saved && SUPPORTED_LOCALES.includes(saved)) {
-      currentLocale = saved;
-    }
-  }
+  currentLocale = savedLocale() ?? systemLocale();
   return currentLocale;
 }
 
@@ -44,12 +57,5 @@ export function tf(
 }
 
 export function initLocale(): void {
-  if (typeof window !== "undefined") {
-    const saved = localStorage.getItem("opentutor-locale") as Locale | null;
-    if (saved && SUPPORTED_LOCALES.includes(saved)) {
-      currentLocale = saved;
-    } else {
-      currentLocale = "en";
-    }
-  }
+  currentLocale = savedLocale() ?? systemLocale();
 }

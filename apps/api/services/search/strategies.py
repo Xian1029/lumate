@@ -12,10 +12,29 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.content import CourseContentTree
+from services.content_text import clean_course_title, normalize_pdf_markdown
 from services.search.compat import cosine_similarity
 from services.search.scoring import _tokenize_query, decompose_search_query
 
 logger = logging.getLogger(__name__)
+
+
+def _presentable_text(value: str | None) -> str:
+    """Keep legacy PDF extraction artefacts out of RAG prompts and evidence."""
+    return normalize_pdf_markdown(value) or ""
+
+
+def _search_result(node: CourseContentTree, score: float, source: str, title: str | None = None) -> dict:
+    return {
+        "id": str(node.id),
+        "title": clean_course_title(title if title is not None else node.title),
+        "content": _presentable_text(node.content)[:1500],
+        "level": node.level,
+        "parent_id": str(node.parent_id) if node.parent_id else None,
+        "source_file": node.source_file,
+        "score": score,
+        "source": source,
+    }
 
 
 async def keyword_search(
@@ -50,23 +69,14 @@ async def keyword_search(
 
     scored = []
     for node in nodes:
-        content_lower = (node.content or "").lower()
-        title_lower = (node.title or "").lower()
+        content_lower = _presentable_text(node.content).lower()
+        title_lower = clean_course_title(node.title).lower()
         hit_count = sum(
             1 for t in terms
             if t.lower() in content_lower or t.lower() in title_lower
         )
         level_boost = max(0.5, 1.0 - node.level * 0.1)
-        scored.append({
-            "id": str(node.id),
-            "title": node.title,
-            "content": (node.content or "")[:1500],
-            "level": node.level,
-            "parent_id": str(node.parent_id) if node.parent_id else None,
-            "source_file": node.source_file,
-            "score": hit_count * level_boost,
-            "source": "keyword",
-        })
+        scored.append(_search_result(node, hit_count * level_boost, "keyword"))
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored[:limit]
@@ -115,16 +125,7 @@ async def vector_search(
     scored.sort(key=lambda x: x[1], reverse=True)
 
     return [
-        {
-            "id": str(n.id),
-            "title": n.title,
-            "content": (n.content or "")[:1500],
-            "level": n.level,
-            "parent_id": str(n.parent_id) if n.parent_id else None,
-            "source_file": n.source_file,
-            "score": sim,
-            "source": "vector",
-        }
+        _search_result(n, sim, "vector")
         for n, sim in scored[:limit]
     ]
 
@@ -159,8 +160,8 @@ async def tree_search(
     query_terms = _tokenize_query(query)
     relevant_chapters = []
     for ch in chapters:
-        title_lower = (ch.title or "").lower()
-        content_lower = (ch.content or "")[:500].lower()
+        title_lower = clean_course_title(ch.title).lower()
+        content_lower = _presentable_text(ch.content)[:500].lower()
         if any(term in title_lower or term in content_lower for term in query_terms):
             relevant_chapters.append(ch)
 
@@ -182,22 +183,18 @@ async def tree_search(
 
         # Score children by query relevance
         for child in children:
-            content_lower = (child.content or "").lower()
+            content_lower = _presentable_text(child.content).lower()
             hit_count = sum(
                 1 for t in query_terms
                 if t in content_lower or t in (child.title or "").lower()
             )
             if hit_count > 0 or len(children) <= 3:
-                results.append({
-                    "id": str(child.id),
-                    "title": f"{chapter.title} > {child.title}",
-                    "content": (child.content or "")[:1500],
-                    "level": child.level,
-                    "parent_id": str(child.parent_id) if child.parent_id else None,
-                    "source_file": child.source_file,
-                    "score": hit_count + 0.5,
-                    "source": "tree",
-                })
+                results.append(_search_result(
+                    child,
+                    hit_count + 0.5,
+                    "tree",
+                    f"{clean_course_title(chapter.title)} > {clean_course_title(child.title)}",
+                ))
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]

@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { listStudyGoals, type StudyGoal } from "@/lib/api";
@@ -17,10 +18,16 @@ function getFirstDayOfWeek(year: number, month: number): number {
 }
 
 const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "一月", "二月", "三月", "四月", "五月", "六月",
+  "七月", "八月", "九月", "十月", "十一月", "十二月",
 ];
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+const GOAL_STATUS_LABELS: Record<string, string> = {
+  active: "进行中",
+  completed: "已完成",
+  paused: "已暂停",
+};
 
 export function CalendarView({ courseId }: CalendarViewProps) {
   const [goals, setGoals] = useState<StudyGoal[]>([]);
@@ -44,7 +51,7 @@ export function CalendarView({ courseId }: CalendarViewProps) {
   // Map dates to goals
   const dateGoals = useMemo(() => {
     const map = new Map<string, StudyGoal[]>();
-    for (const goal of goals) {
+    for (const goal of goals.filter((item) => item.status !== "archived")) {
       if (!goal.target_date) continue;
       const d = new Date(goal.target_date);
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -93,7 +100,7 @@ export function CalendarView({ courseId }: CalendarViewProps) {
           <ChevronLeft className="size-4" />
         </button>
         <h3 className="text-sm font-semibold text-foreground">
-          {MONTH_NAMES[month]} {year}
+          {year} 年 {MONTH_NAMES[month]}
         </h3>
         <button type="button" onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
           <ChevronRight className="size-4" />
@@ -158,9 +165,9 @@ export function CalendarView({ courseId }: CalendarViewProps) {
       {/* Upcoming list below calendar */}
       {goals.filter((g) => g.target_date).length > 0 && (
         <div className="mt-4 border-t border-border/60 pt-3 space-y-1.5">
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Upcoming</h4>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t("ui.upcoming")}</h4>
           {goals
-            .filter((g) => g.target_date)
+            .filter((g) => g.target_date && g.status !== "archived")
             .sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime())
             .slice(0, 5)
             .map((g) => {
@@ -172,10 +179,10 @@ export function CalendarView({ courseId }: CalendarViewProps) {
                   <span className={`tabular-nums shrink-0 w-12 text-right ${
                     daysLeft < 0 ? "text-destructive font-semibold" : daysLeft <= 3 ? "text-warning font-medium" : "text-muted-foreground"
                   }`}>
-                    {daysLeft < 0 ? "Overdue" : daysLeft === 0 ? "Today" : `${daysLeft}d`}
+                    {daysLeft < 0 ? `逾期 ${Math.abs(daysLeft)} 天` : daysLeft === 0 ? "今天" : `${daysLeft} 天后`}
                   </span>
                   <span className="truncate text-foreground">{g.title}</span>
-                  <span className="text-muted-foreground shrink-0">{g.status}</span>
+                  <span className="text-muted-foreground shrink-0">{GOAL_STATUS_LABELS[g.status] ?? "待安排"}</span>
                 </div>
               );
             })}

@@ -89,10 +89,10 @@ describe("NotificationsSection", () => {
   });
 
   it("renders error state and retry action on load failure", async () => {
-    listNotifications.mockRejectedValue(new Error("Request failed"));
+    listNotifications.mockRejectedValue(new Error(t("ui.request_failed")));
 
     const { user } = render(<NotificationsSection />);
-    expect(await screen.findByText("Request failed")).toBeInTheDocument();
+    expect(await screen.findByText(t("ui.request_failed"))).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "common.retry" }));
     await waitFor(() => {

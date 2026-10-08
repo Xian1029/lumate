@@ -43,4 +43,13 @@ async def get_course_or_404(
     user_id: uuid.UUID | None = None,
 ) -> Course:
     """Return a course or raise 404."""
-    return await get_or_404(db, Course, course_id, user_id=user_id, label="Course")
+    # A SETUP course is deliberately hidden from normal course lists, but the
+    # owner must be able to upload, inspect and confirm its parsing result.
+    query = select(Course).where(Course.id == course_id, Course.status.in_(("ACTIVE", "SETUP")))
+    if user_id is not None:
+        query = query.where(Course.user_id == user_id)
+    result = await db.execute(query)
+    course = result.scalar_one_or_none()
+    if not course:
+        raise NotFoundError("Course", course_id)
+    return course

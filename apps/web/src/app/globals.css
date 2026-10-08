@@ -80,7 +80,7 @@
 }
 
 :root {
-  --font-geist-sans: var(--font-space-grotesk), "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-geist-sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-geist-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius: 0.75rem;
 

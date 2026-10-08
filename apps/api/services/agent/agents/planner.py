@@ -4,6 +4,7 @@ Replaces: PlanningAgent. Essentially a rename with the same core logic.
 """
 
 import logging
+import uuid
 from typing import AsyncIterator
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -97,7 +98,8 @@ class PlanAgent(ReActMixin, BaseAgent):
         async for chunk in ReActMixin.stream(self, ctx, db):
             yield chunk
 
-        # Persist generated plan to StudyPlan table
+        # Persist a generation snapshot and a formal DRAFT. The snapshot is
+        # historical content only; the LearningPlan is the business record.
         await self._save_plan(ctx, db)
 
     async def _save_plan(self, ctx: AgentContext, db: AsyncSession) -> None:
@@ -105,17 +107,8 @@ class PlanAgent(ReActMixin, BaseAgent):
         if not ctx.response or len(ctx.response) < 50:
             return
         try:
-            from models.study_plan import StudyPlan
             from services.generated_assets import save_generated_asset
-            plan = StudyPlan(
-                user_id=ctx.user_id,
-                course_id=ctx.course_id,
-                name=ctx.user_message[:100],
-                scene_id=ctx.scene,
-                tasks={"markdown": ctx.response, "source_message": ctx.user_message},
-            )
-            db.add(plan)
-            await save_generated_asset(
+            saved = await save_generated_asset(
                 db,
                 user_id=ctx.user_id,
                 course_id=ctx.course_id,
@@ -124,7 +117,18 @@ class PlanAgent(ReActMixin, BaseAgent):
                 content={"markdown": ctx.response},
                 metadata={"scene_id": ctx.scene, "source_message": ctx.user_message},
             )
+            from services.learning_plans.legacy_compat import create_plan_from_legacy_markdown
+            await create_plan_from_legacy_markdown(
+                db,
+                user_id=ctx.user_id,
+                course_id=ctx.course_id,
+                title=ctx.user_message[:100] or "学习计划草稿",
+                markdown=ctx.response,
+                source="AI",
+                generated_asset_batch_id=uuid.UUID(saved["batch_id"]),
+                submit_for_review=False,
+            )
             await db.flush()
-            logger.info("Study plan saved for user=%s course=%s", ctx.user_id, ctx.course_id)
+            logger.info("Study plan draft created for user=%s course=%s", ctx.user_id, ctx.course_id)
         except (SQLAlchemyError, ConnectionError, TimeoutError) as e:
             logger.exception("Failed to save study plan: %s", e)

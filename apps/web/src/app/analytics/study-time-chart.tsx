@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import {
   AreaChart,
   Area,
@@ -25,7 +26,7 @@ interface StudyTimeChartProps {
 export function StudyTimeChart({ data }: StudyTimeChartProps) {
   return (
     <section className="rounded-xl border border-border bg-card p-4">
-      <h2 className="font-medium mb-4 text-foreground">Daily Study Time (last 30 days)</h2>
+      <h2 className="font-medium mb-4 text-foreground">{t("ui.daily_study_time_last_30_days")}</h2>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
@@ -38,7 +39,7 @@ export function StudyTimeChart({ data }: StudyTimeChartProps) {
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip
               labelFormatter={(v) => String(v)}
-              formatter={(value) => [`${value} min`, "Study Time"]}
+              formatter={(value) => [`${value} min`, t("ui.study_time")]}
             />
             <Area
               type="monotone"

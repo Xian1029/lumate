@@ -217,6 +217,7 @@ async def run_agent_turn(
     tab_context: dict | None = None,
     scene: str | None = None,
     post_process_inline: bool = False,
+    response_language: str = "zh",
 ) -> AgentContext:
     """One-shot orchestration path reused by workflows and non-streaming entry points."""
     ctx = build_agent_context(
@@ -229,6 +230,7 @@ async def run_agent_turn(
         active_tab=active_tab,
         tab_context=tab_context,
         scene=scene,
+        response_language=response_language,
     )
     clarify = _parse_clarify_inputs(message)
     if clarify:
@@ -285,6 +287,7 @@ async def orchestrate_stream(
     learning_mode: str | None = None,
     block_types: list[str] | None = None,
     dismissed_block_types: list[str] | None = None,
+    response_language: str = "zh",
 ) -> AsyncIterator[dict]:
     """Main orchestration entry point for streaming responses."""
     ctx = build_agent_context(
@@ -301,6 +304,7 @@ async def orchestrate_stream(
         learning_mode=learning_mode,
         block_types=block_types,
         dismissed_block_types=dismissed_block_types,
+        response_language=response_language,
     )
     clarify = _parse_clarify_inputs(message)
     if clarify:

@@ -15,6 +15,8 @@ import csv
 import logging
 from pathlib import Path
 
+from services.content_text import normalize_pdf_markdown
+
 logger = logging.getLogger(__name__)
 
 # Office formats handled by loader_dict (GPT-Researcher pattern)
@@ -107,7 +109,9 @@ def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
 
         converter = PdfConverter(artifact_dict=_get_marker_models())
         rendered = converter(file_path)
-        return Path(file_path).stem, rendered.markdown
+        # PDF glyph IDs and control codes are not portable Markdown. Clean at
+        # extraction time so every later pipeline stage receives readable text.
+        return Path(file_path).stem, normalize_pdf_markdown(rendered.markdown) or ""
     except ImportError:
         pass
     except (IOError, OSError) as e:
@@ -120,17 +124,109 @@ def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
         import pypdf
         from pypdf.errors import PyPdfError
 
-        reader = pypdf.PdfReader(file_path)
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        return Path(file_path).stem, text
+        reader = pypdf.PdfReader(file_path, strict=False)
+        page_texts: list[str] = []
+        unreadable_pages: list[int] = []
+        for page_index in range(len(reader.pages)):
+            page_number = page_index + 1
+            try:
+                page = reader.pages[page_index]
+                _resolve_pypdf_font_widths(page)
+                page_texts.append(page.extract_text() or "")
+            except (PyPdfError, ValueError, KeyError, TypeError, AttributeError) as e:
+                # A malformed page box or indirect PDF object must not make an
+                # otherwise readable textbook fail in its entirety.
+                unreadable_pages.append(page_number)
+                logger.warning(
+                    "Skipping unreadable page %s in %s: %s",
+                    page_number,
+                    Path(file_path).name,
+                    e,
+                )
+        if unreadable_pages:
+            logger.warning(
+                "Extracted %s with %d unreadable page(s): %s",
+                Path(file_path).name,
+                len(unreadable_pages),
+                unreadable_pages[:20],
+            )
+            # Never silently accept a partial textbook. The ingestion pipeline
+            # detects this marker and asks for a replacement instead of showing
+            # an incomplete course outline as if parsing had succeeded.
+            page_texts.append(
+                "[[OPENTUTOR_UNREADABLE_PAGES:"
+                + ",".join(str(page) for page in unreadable_pages)
+                + f"|total={len(reader.pages)}]]"
+            )
+        text = "\n".join(page_texts)
+        return Path(file_path).stem, normalize_pdf_markdown(text) or ""
     except ImportError:
         logger.debug("pypdf not installed, skipping PDF fallback")
     except (IOError, OSError) as e:
         logger.warning("pypdf file I/O error: %s", e)
-    except (PyPdfError, ValueError, KeyError) as e:
+    except (PyPdfError, ValueError, KeyError, TypeError, AttributeError) as e:
         logger.warning("pypdf parsing error for %s: %s", Path(file_path).name, e)
 
     return Path(file_path).stem, ""
+
+
+def _resolve_pypdf_font_widths(page) -> None:
+    """Resolve malformed indirect numeric font widths before text extraction.
+
+    Some Chinese textbook PDFs store values in /Widths, /DW, /W and
+    /MissingWidth as indirect objects. pypdf 6.x otherwise leaves those
+    references inside its Font model and raises TypeError while calculating
+    text spacing. Mutating the in-memory reader objects is safe and leaves the
+    original PDF untouched.
+    """
+    try:
+        from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, NumberObject, FloatObject, NameObject
+
+        def resolved_object(value):
+            while isinstance(value, IndirectObject):
+                value = value.get_object()
+            if isinstance(value, ArrayObject):
+                return ArrayObject([resolved_object(item) for item in value])
+            if isinstance(value, list):
+                return ArrayObject([resolved_object(item) for item in value])
+            if isinstance(value, DictionaryObject):
+                for key in list(value.keys()):
+                    value[key] = resolved_object(value[key])
+                return value
+            if isinstance(value, float):
+                return FloatObject(value)
+            if isinstance(value, int):
+                return NumberObject(value)
+            return value
+
+        resources = page.get("/Resources")
+        resources = resources.get_object() if resources is not None else None
+        fonts = resources.get("/Font") if resources else None
+        fonts = fonts.get_object() if fonts is not None else None
+        if not fonts:
+            return
+
+        for font_ref in fonts.values():
+            font = font_ref.get_object()
+            for key in ("/Widths", "/FirstChar", "/LastChar", "/FontBBox", "/Encoding"):
+                if key in font:
+                    font[NameObject(key)] = resolved_object(font[key])
+            descriptor = font.get("/FontDescriptor")
+            descriptor = descriptor.get_object() if descriptor is not None else None
+            if descriptor and "/MissingWidth" in descriptor:
+                descriptor[NameObject("/MissingWidth")] = resolved_object(descriptor["/MissingWidth"])
+            descendants = font.get("/DescendantFonts")
+            descendants = descendants.get_object() if descendants is not None else []
+            for descendant_ref in descendants:
+                descendant = descendant_ref.get_object()
+                if "/W" in descendant:
+                    descendant[NameObject("/W")] = resolved_object(descendant["/W"])
+                if "/DW" in descendant:
+                    descendant[NameObject("/DW")] = resolved_object(descendant["/DW"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # Extraction still has its normal guarded fallback. This repair must
+        # never introduce a new hard failure for otherwise valid PDFs.
+        logger.debug("Could not normalize PDF font widths", exc_info=True)
 
 
 def _extract_html_fallback(file_path: str) -> tuple[str, str]:

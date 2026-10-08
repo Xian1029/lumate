@@ -4,6 +4,7 @@ import ReviewPage from "./page";
 
 const mockPush = vi.fn();
 const getReviewSession = vi.fn();
+const getAiNoteForNode = vi.fn();
 const submitReviewRating = vi.fn();
 const trackApiFailure = vi.fn();
 
@@ -17,10 +18,12 @@ vi.mock("next/navigation", () => ({
     replace: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/api", () => ({
   getReviewSession: (...args: unknown[]) => getReviewSession(...args),
+  getAiNoteForNode: (...args: unknown[]) => getAiNoteForNode(...args),
   submitReviewRating: (...args: unknown[]) => submitReviewRating(...args),
 }));
 
@@ -39,6 +42,7 @@ vi.mock("@/lib/i18n-context", () => ({
 describe("ReviewPage rating flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     getReviewSession.mockResolvedValue({
       course_id: "course-1",
       count: 2,
@@ -52,6 +56,7 @@ describe("ReviewPage rating flow", () => {
           urgency: "urgent",
           cluster: null,
           last_reviewed: null,
+          content_node_id: "node-1",
         },
         {
           concept_id: "concept-2",
@@ -97,5 +102,29 @@ describe("ReviewPage rating flow", () => {
     expect(submitReviewRating).toHaveBeenNthCalledWith(1, "course-1", "concept-1", "good");
     expect(submitReviewRating).toHaveBeenNthCalledWith(2, "course-1", "concept-1", "good");
     expect(trackApiFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the related chapter note in place without navigating away", async () => {
+    getAiNoteForNode.mockResolvedValue({
+      id: "note-1",
+      title: "整式的加减",
+      markdown: "## 合并同类项\n同类项的系数相加。",
+      format: "markdown",
+      auto_generated: true,
+      version: 1,
+    });
+
+    const { user } = render(<ReviewPage />);
+    await screen.findByText("Concept One");
+    await user.click(screen.getByRole("button", { name: "review.viewRelatedNote" }));
+
+    expect(await screen.findByText("整式的加减")).toBeInTheDocument();
+    expect(screen.getByText("同类项的系数相加。")).toBeInTheDocument();
+    expect(getAiNoteForNode).toHaveBeenCalledWith("course-1", "node-1");
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "review.goToChapterLearning" })).toHaveAttribute(
+      "href",
+      "/course/course-1?node=node-1#notes",
+    );
   });
 });

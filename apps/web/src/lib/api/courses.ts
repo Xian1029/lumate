@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { API_BASE, buildSecureHeaders, buildSecureRequestInit, parseApiError, request } from "./client";
 
 import type { ContentMutationResult, SavedGeneratedAsset } from "./client";
@@ -35,6 +36,8 @@ export interface Course {
   metadata?: CourseMetadata | null;
   created_at: string;
   updated_at?: string | null;
+  status?: "ACTIVE" | "TRASHED" | string;
+  deleted_at?: string | null;
   file_count?: number;
   content_node_count?: number;
   active_goal_count?: number;
@@ -95,10 +98,27 @@ export async function createCourse(
   name: string,
   description?: string,
   metadata?: CourseMetadata,
+  status: "ACTIVE" | "SETUP" = "ACTIVE",
 ): Promise<Course> {
   return request("/courses/", {
     method: "POST",
-    body: JSON.stringify({ name, description, metadata }),
+    body: JSON.stringify({ name, description, metadata, status }),
+  });
+}
+
+export async function activateCourse(courseId: string): Promise<Course> {
+  return request(`/courses/${courseId}/activate`, { method: "POST" });
+}
+
+export async function cancelSetupCourse(
+  courseId: string,
+  options?: { keepalive?: boolean; silent?: boolean },
+): Promise<void> {
+  await request<void>(`/courses/${courseId}/setup`, {
+    method: "DELETE",
+    keepalive: options?.keepalive,
+    retry: !options?.keepalive,
+    suppressErrorToast: options?.silent,
   });
 }
 
@@ -118,6 +138,22 @@ export async function updateCourse(
 
 export async function deleteCourse(id: string): Promise<void> {
   await request<void>(`/courses/${id}`, { method: "DELETE" });
+}
+
+export async function listTrashedCourses(): Promise<Course[]> {
+  return request("/courses/trash");
+}
+
+export async function restoreCourse(id: string): Promise<Course> {
+  return request(`/courses/trash/${id}/restore`, { method: "POST" });
+}
+
+export async function permanentlyDeleteCourse(id: string): Promise<void> {
+  await request<void>(`/courses/trash/${id}`, { method: "DELETE" });
+}
+
+export async function emptyCourseTrash(): Promise<void> {
+  await request<void>("/courses/trash", { method: "DELETE" });
 }
 
 export async function updateCourseLayout(
@@ -140,7 +176,8 @@ export interface ContentNode {
   level: number;
   order_index: number;
   source_type: string;
-  content_category?: "lecture_slides" | "textbook" | "notes" | "syllabus" | "assignment" | "exam_schedule" | "other" | null;
+  source_file?: string | null;
+  content_category?: "lecture_slides" | "textbook" | "notes" | "syllabus" | "assignment" | "exam_schedule" | "reference" | "other" | null;
   children: ContentNode[];
   file_type?: string;
   file_id?: string;
@@ -208,14 +245,60 @@ export async function getAiNoteForNode(
   return request(`/notes/generated/${courseId}/by-node/${nodeId}`);
 }
 
+export type PersonalNoteStyle = "sunshine" | "mint" | "sky" | "berry";
+
+export interface PersonalNote {
+  id: string;
+  content_node_id: string;
+  text: string;
+  style: PersonalNoteStyle;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export async function listPersonalNotes(courseId: string, nodeId: string): Promise<PersonalNote[]> {
+  return request(`/notes/personal/${courseId}/by-node/${nodeId}`);
+}
+
+export async function createPersonalNote(
+  courseId: string,
+  nodeId: string,
+  text: string,
+  style: PersonalNoteStyle,
+): Promise<PersonalNote> {
+  return request(`/notes/personal/${courseId}`, {
+    method: "POST",
+    body: JSON.stringify({ content_node_id: nodeId, text, style }),
+  });
+}
+
+export async function updatePersonalNote(
+  courseId: string,
+  noteId: string,
+  nodeId: string,
+  text: string,
+  style: PersonalNoteStyle,
+): Promise<PersonalNote> {
+  return request(`/notes/personal/${courseId}/${noteId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ content_node_id: nodeId, text, style }),
+  });
+}
+
+export async function deletePersonalNote(courseId: string, noteId: string): Promise<void> {
+  await request(`/notes/personal/${courseId}/${noteId}`, { method: "DELETE" });
+}
+
 export async function uploadFile(
   courseId: string,
   file: File,
   onProgress?: (pct: number) => void,
+  replaceFailedJobId?: string,
 ): Promise<ContentMutationResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("course_id", courseId);
+  if (replaceFailedJobId) form.append("replace_failed_job_id", replaceFailedJobId);
 
   // Use XHR when caller wants progress updates; fall back to fetch otherwise.
   if (onProgress) {
@@ -235,7 +318,7 @@ export async function uploadFile(
           try {
             resolve(JSON.parse(xhr.responseText));
           } catch {
-            reject(new Error("Invalid JSON in upload response"));
+            reject(new Error(t("ui.invalid_json")));
           }
         } else {
           let detail = `Upload failed (${xhr.status})`;
@@ -243,7 +326,7 @@ export async function uploadFile(
           reject(new Error(detail));
         }
       };
-      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.onerror = () => reject(new Error(t("ui.network_upload_err")));
       xhr.send(form);
     });
   }
@@ -312,7 +395,7 @@ export async function canvasBrowserLogin(
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { message?: string; detail?: string };
-      throw new Error(body.message ?? body.detail ?? "Login failed");
+      throw new Error(body.message ?? body.detail ?? t("ui.login_failed"));
     }
     return res.json();
   } finally {

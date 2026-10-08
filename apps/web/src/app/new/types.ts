@@ -4,7 +4,6 @@ export type Mode = "upload" | "url" | "both";
 export type Step = "mode" | "upload" | "parsing" | "features";
 
 export const STEP_LABELS: { key: Step; labelKey: string }[] = [
-  { key: "mode", labelKey: "new.step.source" },
   { key: "upload", labelKey: "new.step.content" },
   { key: "parsing", labelKey: "new.step.parse" },
   { key: "features", labelKey: "new.step.features" },
@@ -87,13 +86,14 @@ export function deriveParseSteps(
 
   return PARSE_STEPS.map((step, index) => {
     const hasCurrent = jobs.some((job) => job.status === step.key);
-    const hasReachedLater = jobs.some((job) => getPhaseRank(job.status) > index);
-    const hasReachedCurrent = jobs.some((job) => getPhaseRank(job.status) >= index);
+    // A batch must not mark a later phase as done simply because another file
+    // reached it.  The slowest current file determines the batch timeline.
+    const everyJobPassed = jobs.every((job) => getPhaseRank(job.status) > index || job.status === "failed");
 
     let status: ParseStep["status"] = "waiting";
     if (hasCurrent) {
       status = "active";
-    } else if (hasReachedLater || (hasReachedCurrent && jobs.every((job) => getPhaseRank(job.status) >= index || job.status === "failed"))) {
+    } else if (everyJobPassed) {
       status = "done";
     }
     return { label: t(step.labelKey), status };

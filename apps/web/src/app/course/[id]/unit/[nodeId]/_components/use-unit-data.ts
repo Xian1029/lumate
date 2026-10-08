@@ -6,16 +6,17 @@ import {
   getHealthStatus,
   listWrongAnswers,
   getReviewSession,
+  getMasteryHistory,
   type ChatAction,
   type HealthStatus,
   type WrongAnswer,
   type ReviewItem,
+  type MasterySnapshot,
 } from "@/lib/api";
 import { ttlCache } from "@/lib/cache";
 import { buildFocusTerms, findNodeById, findPathToNode } from "@/lib/content-tree";
 import {
   matchesFocus,
-  scoreWrongAnswerFocus,
   buildErrorPatternSummary,
   buildMasterySummary,
   buildErrorTrendSummary,
@@ -32,6 +33,8 @@ export function useUnitData(courseId: string, nodeId: string) {
   const [wrongAnswers, setWrongAnswers] = useState<WrongAnswer[]>([]);
   const [trendBaseAnswers, setTrendBaseAnswers] = useState<WrongAnswer[]>([]);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [masteryHistory, setMasteryHistory] = useState<MasterySnapshot[]>([]);
+  const analyticsRefreshKey = useWorkspaceStore((s) => s.sectionRefreshKey.analytics);
   const [loadedSignalsKey, setLoadedSignalsKey] = useState<string | null>(null);
 
   const aiActionsEnabled =
@@ -78,19 +81,17 @@ export function useUnitData(courseId: string, nodeId: string) {
   useEffect(() => {
     if (!node) return;
 
-    listWrongAnswers(courseId)
+    // The source problem stores its content_node_id.  Keyword matching made
+    // real errors disappear whenever the question did not repeat its lesson
+    // title, so this panel always queries the authoritative lesson scope.
+    listWrongAnswers(courseId, { content_node_id: nodeId })
       .then((items) => {
         if (!items) {
           setWrongAnswers([]);
           return;
         }
-        const scored = items
-          .map((item) => ({ item, score: scoreWrongAnswerFocus(item, focusTerms) }))
-          .sort((a, b) => b.score - a.score);
-        const matched = scored.filter((entry) => entry.score > 0).map((entry) => entry.item);
-        const focused = matched.length > 0 ? matched : items;
-        setTrendBaseAnswers(focused);
-        setWrongAnswers(focused.slice(0, 12));
+        setTrendBaseAnswers(items);
+        setWrongAnswers(items.slice(0, 12));
       })
       .catch((e) => {
         console.error("[Unit] wrong answers fetch failed:", e);
@@ -101,15 +102,18 @@ export function useUnitData(courseId: string, nodeId: string) {
     getReviewSession(courseId, 30)
       .then((session) => {
         const allItems = session?.items ?? [];
-        const filtered = allItems.filter((item) => matchesFocus(item.concept_label, focusTerms));
-        setReviewItems((filtered.length > 0 ? filtered : allItems).slice(0, 12));
+        const filtered = allItems.filter((item) => item.content_node_id === nodeId || matchesFocus(item.concept_label, focusTerms));
+        setReviewItems(filtered.slice(0, 12));
       })
       .catch((e) => {
         console.error("[Unit] review session fetch failed:", e);
         setReviewItems([]);
       })
       .finally(() => setLoadedSignalsKey(signalsKey));
-  }, [courseId, focusTerms, node, signalsKey]);
+    getMasteryHistory(courseId, nodeId, 50)
+      .then(setMasteryHistory)
+      .catch(() => setMasteryHistory([]));
+  }, [courseId, focusTerms, node, nodeId, signalsKey, analyticsRefreshKey]);
 
   const loadingSignals = Boolean(node) && loadedSignalsKey !== signalsKey;
 
@@ -150,6 +154,7 @@ export function useUnitData(courseId: string, nodeId: string) {
     focusTerms,
     wrongAnswers,
     reviewItems,
+    masteryHistory,
     loadingSignals,
     aiActionsEnabled,
     errorPatterns,

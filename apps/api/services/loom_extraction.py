@@ -36,6 +36,11 @@ FUSION_SIMILARITY_THRESHOLD = 0.85  # Graphusion: merge concepts above this cosi
 
 _EXTRACT_PROMPT = """Analyze this educational content and extract the key concepts being taught.
 
+Language requirement (mandatory): Detect the language used by the content and write every
+concept name, description, prerequisite, and related concept in that same language. If the
+content is Chinese, all concept names and descriptions must be natural Simplified Chinese;
+do not output English concept names or bilingual labels.
+
 For each concept, provide:
 1. name: A concise concept name (2-5 words, e.g. "Chain Rule", "Supply and Demand")
 2. description: One sentence describing what it is
@@ -81,7 +86,7 @@ async def _extract_from_chunk(client, title: str, content: str) -> list[dict]:
     prompt = _EXTRACT_PROMPT.format(title=title, content=content[:3000])
     try:
         raw, _ = await client.extract(
-            "You are a curriculum analyst. Output valid JSON arrays only.",
+            "You are a curriculum analyst. Preserve the source content language exactly and output valid JSON arrays only.",
             prompt,
         )
         return _parse_concepts_json(raw)
@@ -339,12 +344,14 @@ async def extract_course_concepts(
 
     await db.flush()  # Assign IDs
 
-    # Link concepts to their source content nodes
+    # Link concepts to the most specific learnable curriculum node. Do not use
+    # the first full-text occurrence: document roots/prefaces often contain the
+    # whole book and previously captured unrelated concepts.
+    from services.knowledge.content_linking import select_best_content_node
     for node in nodes:
-        for content_node in eligible[:5]:
-            if node.name.lower() in (content_node.content or "").lower():
-                node.content_node_id = content_node.id
-                break
+        matched_content = select_best_content_node(node.name, content_nodes)
+        if matched_content:
+            node.content_node_id = matched_content.id
 
     # Create edges
     for item in concepts_data[:max_nodes]:

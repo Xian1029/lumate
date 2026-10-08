@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { getReviewSession, type ReviewItem } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
@@ -15,11 +16,18 @@ const URGENCY_COLORS: Record<string, string> = {
   ok: "bg-green-500/15 text-green-700 dark:text-green-400",
 };
 
+const URGENCY_LABELS: Record<string, string> = {
+  overdue: "已逾期",
+  urgent: "紧急",
+  warning: "需注意",
+  ok: "正常",
+};
+
 function MasteryBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   return (
     <div className="flex items-center gap-2">
-      <div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Mastery" className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+      <div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={t("ui.mastery")} className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
         <div
           className="h-full rounded-full transition-all"
           style={{
@@ -68,7 +76,7 @@ export function ReviewSummaryView({ courseId }: ReviewSummaryViewProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8" data-testid="review-summary-panel">
-        <p className="text-xs text-muted-foreground animate-pulse">Loading review session...</p>
+        <p className="text-xs text-muted-foreground animate-pulse">{t("ui.loading_review_session")}</p>
       </div>
     );
   }
@@ -76,9 +84,9 @@ export function ReviewSummaryView({ courseId }: ReviewSummaryViewProps) {
   if (empty) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center" data-testid="review-summary-panel">
-        <h3 className="text-sm font-medium mb-1">Smart Review</h3>
+        <h3 className="text-sm font-medium mb-1">{t("ui.smart_review")}</h3>
         <p className="text-xs text-muted-foreground max-w-xs">
-          No concepts need review right now. Keep learning!
+          {t("review.noItemsEncouragement")}
         </p>
       </div>
     );
@@ -88,18 +96,18 @@ export function ReviewSummaryView({ courseId }: ReviewSummaryViewProps) {
   const warningCount = items.filter((i) => i.urgency === "warning").length;
 
   return (
-    <div role="region" aria-label="Smart review queue" className="flex-1 flex flex-col overflow-hidden" data-testid="review-summary-panel">
+    <div role="region" aria-label={t("ui.smart_review_queue")} className="flex-1 flex flex-col overflow-hidden" data-testid="review-summary-panel">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between">
-        <span className="text-xs font-medium">LECTOR Smart Review</span>
+        <span className="text-xs font-medium">{t("ui.lector_smart_review")}</span>
         <div className="flex gap-1.5">
           {urgentCount > 0 && (
             <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 border-red-200">
-              {urgentCount} urgent
+              {urgentCount} {t("review.urgency.urgent")}
             </Badge>
           )}
           {warningCount > 0 && (
             <Badge variant="outline" className="text-[10px] bg-yellow-500/10 text-yellow-600 border-yellow-200">
-              {warningCount} warning
+              {warningCount} {t("review.urgency.warning")}
             </Badge>
           )}
         </div>
@@ -118,16 +126,16 @@ export function ReviewSummaryView({ courseId }: ReviewSummaryViewProps) {
                   URGENCY_COLORS[item.urgency] ?? URGENCY_COLORS.ok
                 }`}
               >
-                {item.urgency}
+                {URGENCY_LABELS[item.urgency] ?? "正常"}
               </span>
             </div>
             <MasteryBar value={item.mastery} />
             <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-              <span>Stability: {item.stability_days.toFixed(1)}d</span>
-              <span>Recall: {Math.round(item.retrievability * 100)}%</span>
-              {item.cluster && <span>Cluster: {item.cluster}</span>}
+              <span>记忆稳定度：{item.stability_days.toFixed(1)} 天</span>
+              <span>回忆率：{Math.round(item.retrievability * 100)}%</span>
+              {item.cluster && <span>知识簇：{item.cluster}</span>}
               {item.last_reviewed && (
-                <span>Last: {new Date(item.last_reviewed).toLocaleDateString()}</span>
+                <span>上次复习：{new Date(item.last_reviewed).toLocaleDateString()}</span>
               )}
             </div>
           </div>

@@ -36,6 +36,11 @@ export default function NewProjectPage() {
           onAddUrl={p.handleAddUrl}
           onBack={() => p.router.push("/")}
           onStartParsing={p.startParsing}
+          uploadPlan={p.uploadPlan}
+          fileAssignments={p.fileAssignments}
+          onFileAssignmentChange={(filename, target) => p.setFileAssignments((current) => ({ ...current, [filename]: target }))}
+          onCombineAll={() => p.setFileAssignments(Object.fromEntries(p.files.map((file) => [file.name, "__all__"]))) }
+          onResetGrouping={() => p.setFileAssignments({})}
           t={p.t}
         />
       )}
@@ -50,9 +55,15 @@ export default function NewProjectPage() {
           parseLogs={p.parseLogs}
           canContinueToFeatures={p.canContinueToFeatures}
           allJobsFailed={p.allJobsFailed}
+          hasFailedJobs={p.hasFailedJob}
+          processingState={p.processingState}
+          readyCourseIds={p.readyCourseIds}
           createdCourseId={p.createdCourseId}
+          createdCourseIds={p.createdCourseIds}
+          uploadPlan={p.uploadPlan}
+          onConfirmParsedSpaces={p.confirmParsedSpaces}
           onEnterWorkspace={p.enterWorkspace}
-          onContinueToFeatures={p.enterWorkspace}
+          onReturnToUpload={p.returnToUpload}
           t={p.t}
         />
       )}

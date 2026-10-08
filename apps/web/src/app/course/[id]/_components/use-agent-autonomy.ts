@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect } from "react";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { BlockType, LearningMode } from "@/lib/block-system/types";
 import type { HealthStatus } from "@/lib/api";
@@ -11,6 +11,7 @@ import {
   updateUnlockContext,
 } from "@/lib/block-system/feature-unlock";
 import { useT, useTF } from "@/lib/i18n-context";
+import { wasReviewSessionRecentlyCompleted } from "@/lib/review-session-state";
 
 const REVIEW_CHECK_TTL_MS = 10 * 60 * 1000;
 const REVIEW_CHECK_RETRY_MS = 5_000;
@@ -65,7 +66,6 @@ function checkAndSuggestUnlockedBlocks(
     { type: "knowledge_graph", message: t("course.unlock.knowledgeGraph") },
     { type: "wrong_answers", message: t("course.unlock.wrongAnswers") },
     { type: "forecast", message: t("course.unlock.forecast") },
-    { type: "plan", message: t("course.unlock.plan") },
   ];
 
   for (const suggestion of UNLOCK_SUGGESTIONS) {
@@ -73,7 +73,8 @@ function checkAndSuggestUnlockedBlocks(
     if (alreadySuggested.includes(suggestion.type)) continue;
     if (currentBlocks.some((b) => b.type === suggestion.type)) continue;
 
-    const blockLabel = BLOCK_REGISTRY[suggestion.type]?.label ?? suggestion.type.replace(/_/g, " ");
+    const registryEntry = BLOCK_REGISTRY[suggestion.type];
+    const blockLabel = registryEntry ? t(registryEntry.labelKey) : suggestion.type.replace(/_/g, " ");
 
     store.agentAddBlock(
       "agent_insight",
@@ -104,13 +105,13 @@ export function useUnlockSuggestions(
   courses: unknown[],
   contentTree: unknown[],
   health: HealthStatus | null,
-  blocksInitialized: MutableRefObject<boolean>,
+  blocksInitialized: boolean,
 ) {
   const spaceMode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const t = useT();
 
   useEffect(() => {
-    if (!blocksInitialized.current) return;
+    if (!blocksInitialized) return;
     if (courses.length === 0) return;
 
     if (contentTree.length > 0) {
@@ -161,12 +162,15 @@ export function useReviewCheck(
           && now - latestLatch.successAt < REVIEW_CHECK_TTL_MS
           && latestLatch.fingerprint === fingerprint;
 
-        if (!shouldSkip && urgentItems.length > 0) {
-          const store = useWorkspaceStore.getState();
-          const hasInsight = store.spaceLayout.blocks.some(
+        const store = useWorkspaceStore.getState();
+        const existingInsight = store.spaceLayout.blocks.find(
             (b) => b.type === "agent_insight" && b.config.insightType === "review_needed",
-          );
-          if (!hasInsight) {
+        );
+        const recentlyCompleted = wasReviewSessionRecentlyCompleted(courseId, now);
+
+        if (recentlyCompleted || urgentItems.length === 0) {
+          if (existingInsight) store.removeBlock(existingInsight.id);
+        } else if (!shouldSkip && !existingInsight) {
             store.agentAddBlock(
               "agent_insight",
               { insightType: "review_needed" },
@@ -175,7 +179,6 @@ export function useReviewCheck(
                 dismissible: true,
               },
             );
-          }
         }
 
         writeReviewCheckLatch(checkKey, {

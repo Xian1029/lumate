@@ -1,7 +1,7 @@
 "use client";
 
 import { GraduationCap, Compass, Clock, Shield, BookOpen, Brain, BarChart3, ListChecks, HelpCircle, Layers, AlertTriangle, Lightbulb, FileText } from "lucide-react";
-import { TEMPLATE_LIST, LEARNING_MODE_LIST } from "@/lib/block-system/templates";
+import { TEMPLATE_LIST, LEARNING_MODE_LIST, LEARNING_MODE_TRANSLATION_KEYS } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 import type { BlockType } from "@/lib/block-system/types";
 
@@ -17,6 +17,7 @@ const BLOCK_ICONS: Record<BlockType, typeof BookOpen> = {
   wrong_answers: AlertTriangle,
   forecast: BarChart3,
   agent_insight: Lightbulb,
+  summary: FileText,
 };
 
 const MODE_ICONS: Record<LearningMode, typeof GraduationCap> = {
@@ -69,6 +70,7 @@ export function TemplateStep({
           const Icon = MODE_ICONS[m.id];
           const active = selectedMode === m.id;
           const colors = MODE_COLORS[m.id];
+          const text = LEARNING_MODE_TRANSLATION_KEYS[m.id];
           return (
             <button
               type="button"
@@ -83,11 +85,11 @@ export function TemplateStep({
               <div className="flex items-center gap-2 mb-1">
                 <Icon className={`size-4 ${active ? colors.text : "text-muted-foreground"}`} />
                 <span className={`text-sm font-medium ${active ? "text-foreground" : "text-foreground"}`}>
-                  {t(`mode.${m.id}`)}
+                  {t(text.label)}
                 </span>
               </div>
               <p className="text-[11px] text-muted-foreground line-clamp-2">
-                {t(`mode.${m.id}.desc`)}
+                {t(text.description)}
               </p>
             </button>
           );

@@ -1,5 +1,4 @@
 "use client";
-
 import { useCallback, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,7 +51,7 @@ export function UrlScrapePopover({
       setUrlPopoverOpen(false);
       onScraped();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
+      const msg = err instanceof Error ? err.message : t("ui.unknown_error");
       toast.error(t("url.scrapeFailed").replace("{message}", msg));
     } finally {
       setIsScraping(false);

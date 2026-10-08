@@ -5,12 +5,10 @@ import type { SpaceLayout } from "@/lib/block-system/types";
 import { useModeEvaluator } from "./use-agent-lifecycle";
 
 const listStudyGoals = vi.fn();
-const getCourseProgress = vi.fn();
 const updateUnlockContext = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   listStudyGoals: (...args: unknown[]) => listStudyGoals(...args),
-  getCourseProgress: (...args: unknown[]) => getCourseProgress(...args),
 }));
 
 vi.mock("@/lib/block-system/feature-unlock", () => ({
@@ -28,7 +26,6 @@ describe("useModeEvaluator", () => {
     sessionStorage.clear();
     localStorage.clear();
     listStudyGoals.mockReset();
-    getCourseProgress.mockReset();
     updateUnlockContext.mockReset();
     useWorkspaceStore.setState({
       spaceLayout: {
@@ -48,12 +45,6 @@ describe("useModeEvaluator", () => {
     listStudyGoals
       .mockRejectedValueOnce(new Error("temporary failure"))
       .mockResolvedValueOnce([]);
-    getCourseProgress.mockResolvedValue({
-      average_mastery: 0.42,
-      mastered: 1,
-      reviewed: 1,
-      in_progress: 1,
-    });
 
     const queueModeSuggestion = vi.fn(() => true);
     renderHook(() => useModeEvaluator("course-1", { id: "course-1" }, true, queueModeSuggestion));
@@ -72,7 +63,6 @@ describe("useModeEvaluator", () => {
 
     await vi.waitFor(() => {
       expect(listStudyGoals).toHaveBeenCalledTimes(2);
-      expect(getCourseProgress).toHaveBeenCalledTimes(1);
     });
 
     const successLatch = JSON.parse(sessionStorage.getItem("agent_mode_eval_course-1") || "{}");

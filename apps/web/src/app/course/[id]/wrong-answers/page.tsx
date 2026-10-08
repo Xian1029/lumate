@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useCourseStore } from "@/store/course";
@@ -45,7 +46,7 @@ export default function WrongAnswersPage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <WorkspaceHeader courseName={course?.name || "Wrong Answers"} courseId={courseId} />
+      <WorkspaceHeader courseName={course?.name || t("ui.wrong_answers")} courseId={courseId} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
         <WrongAnswersView courseId={courseId} />
       </main>

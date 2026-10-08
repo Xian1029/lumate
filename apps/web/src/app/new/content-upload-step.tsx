@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { GraduationCap, Compass, Clock, Shield } from "lucide-react";
+import { GraduationCap, Compass, Clock } from "lucide-react";
 import type { Mode, FileItem } from "./types";
+import type { UploadPlan } from "@/lib/api";
 import type { LearningMode } from "@/lib/block-system/types";
+import { LEARNING_MODE_TRANSLATION_KEYS } from "@/lib/block-system/templates";
 import { formatSize } from "./types";
 import { StepIndicator } from "./step-indicator";
 import { UrlSection, AutoScrapeSection } from "./url-section";
@@ -29,6 +31,11 @@ interface ContentUploadStepProps {
   onAddUrl: () => void;
   onBack: () => void;
   onStartParsing: () => void;
+  uploadPlan?: UploadPlan | null;
+  fileAssignments: Record<string, string>;
+  onFileAssignmentChange: (filename: string, target: string) => void;
+  onCombineAll: () => void;
+  onResetGrouping: () => void;
   t: (key: string) => string;
 }
 
@@ -53,6 +60,11 @@ export function ContentUploadStep({
   onAddUrl,
   onBack,
   onStartParsing,
+  uploadPlan,
+  fileAssignments,
+  onFileAssignmentChange,
+  onCombineAll,
+  onResetGrouping,
   t,
 }: ContentUploadStepProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -105,11 +117,11 @@ export function ContentUploadStep({
   function getModeLabel(): string {
     if (mode === "upload") return t("new.mode.upload");
     if (mode === "url") return t("new.mode.url");
-    return `${t("new.mode.both")}: ${t("new.mode.upload")} + ${t("new.addUrl")}`;
+    return `${t("new.mode.upload")} + ${t("new.addUrl")}`;
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-12 flex flex-col gap-8 animate-in fade-in duration-300">
+    <div className="mx-auto flex max-w-4xl flex-col gap-7 p-4 animate-in fade-in duration-300 sm:p-8 lg:p-12">
       {/* Top nav */}
       <div className="flex items-center gap-3">
         <button type="button" data-testid="new-back-mode" onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
@@ -151,19 +163,19 @@ export function ContentUploadStep({
       {/* Learning Mode */}
       <div className="flex flex-col gap-2">
         <label className="font-semibold text-sm text-foreground">
-          {t("mode.title") !== "mode.title" ? t("mode.title") : "Learning Mode"}
+          {t("mode.title") !== "mode.title" ? t("mode.title") : t("ui.learning_mode")}
         </label>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           {(
             [
               { id: "course_following", icon: GraduationCap },
               { id: "self_paced", icon: Compass },
               { id: "exam_prep", icon: Clock },
-              { id: "maintenance", icon: Shield },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
             const active = learningMode === item.id;
+            const text = LEARNING_MODE_TRANSLATION_KEYS[item.id];
             return (
               <button
                 key={item.id}
@@ -177,7 +189,7 @@ export function ContentUploadStep({
               >
                 <Icon className={`size-3.5 ${active ? "text-brand" : "text-muted-foreground"}`} />
                 <span className="text-xs font-medium">
-                  {t(`mode.${item.id}`) !== `mode.${item.id}` ? t(`mode.${item.id}`) : item.id}
+                  {t(text.label)}
                 </span>
               </button>
             );
@@ -221,6 +233,49 @@ export function ContentUploadStep({
           onAutoScrapeChange={onAutoScrapeChange}
           t={t}
         />
+      )}
+
+      {/* Multi-subject split preview */}
+      {uploadPlan && (uploadPlan.groups.length > 1 || uploadPlan.unclassified.length > 0) && (
+        <div className="flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand-muted/20 p-4">
+          <h3 className="text-sm font-semibold text-foreground">检测到 {uploadPlan.groups.length} 个学科分组</h3>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={onCombineAll} className="rounded-md border border-brand/40 bg-background px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand-muted">全部放入同一学习空间</button><button type="button" onClick={onResetGrouping} className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">恢复自动分组</button></div>
+          {files.length > 0 && files.every((file) => fileAssignments[file.name] === "__all__") && <p className="rounded-lg bg-brand-muted/40 px-3 py-2 text-xs text-brand">已选择合并：所有资料会进入同一个学习空间，不再按学科拆分。</p>}
+          <div className="space-y-2">
+            {uploadPlan.groups.map((group) => (
+              <div key={group.key} className="rounded-lg bg-card px-3 py-2">
+                <div className="flex items-center justify-between gap-3"><span className="text-sm font-medium text-foreground">
+                  {group.grade ?? ""}{group.subject ?? "未知学科"}
+                  {group.publisher ? ` · ${group.publisher}` : ""}
+                </span><span className="text-xs text-muted-foreground">建议创建「{group.suggested_name}」</span></div>
+                <div className="mt-2 space-y-1">{group.files.map((file) => <label key={file.filename} className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs"><span className="truncate">{file.filename}</span><select value={fileAssignments[file.filename] ?? group.key} onChange={(event) => onFileAssignmentChange(file.filename, event.target.value)} className="h-7 max-w-52 rounded border border-border bg-background px-1.5"><option value={group.key}>保留在此空间</option>{uploadPlan.groups.filter((target) => target.key !== group.key).map((target) => <option key={target.key} value={target.key}>移动到「{target.suggested_name}」</option>)}<option value="__all__">合并到同一学习空间</option><option value="__separate__">单独创建学习空间</option></select></label>)}</div>
+              </div>
+            ))}
+          </div>
+          {uploadPlan.unclassified.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <p className="text-xs font-medium text-amber-800">以下资料无法可靠识别，需由你确认后才能继续；系统不会自动混入其他学科。</p>
+              {uploadPlan.unclassified.map((file) => (
+                <label key={file.filename} className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs text-foreground">
+                  <span className="truncate">{file.filename}</span>
+                  <select
+                    value={fileAssignments[file.filename] ?? ""}
+                    onChange={(event) => onFileAssignmentChange(file.filename, event.target.value)}
+                    className="h-8 max-w-52 rounded-md border border-amber-300 bg-white px-2"
+                  >
+                    <option value="">选择归属…</option>
+                    {uploadPlan.groups.map((group) => <option key={group.key} value={group.key}>加入「{group.suggested_name}」</option>)}
+                    <option value="__all__">合并到同一学习空间</option>
+                    <option value="__separate__">单独创建学习空间</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
+          {uploadPlan.groups.length > 1 && (
+            <p className="text-xs text-muted-foreground">确认后将分别创建 {uploadPlan.groups.length} 个学习空间。</p>
+          )}
+        </div>
       )}
 
       <div className="w-full h-px bg-border" />

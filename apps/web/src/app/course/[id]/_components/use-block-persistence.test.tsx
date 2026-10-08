@@ -31,7 +31,7 @@ describe("useBlockPersistence", () => {
     vi.useRealTimers();
   });
 
-  it("persists empty layouts after all blocks are removed", async () => {
+  it("persists an intentionally empty optional layout after blocks are removed", async () => {
     useWorkspaceStore.setState({
       spaceLayout: makeLayout([
         {
@@ -59,11 +59,21 @@ describe("useBlockPersistence", () => {
 
     expect(mockUpdateCourseLayout).toHaveBeenCalledWith(
       "course-1",
-      expect.objectContaining({ blocks: [] }),
+      expect.objectContaining({
+        blocks: [],
+      }),
     );
 
-    const saved = JSON.parse(localStorage.getItem("opentutor_blocks_course-1") || "{}");
-    expect(saved.blocks).toEqual([]);
+    // Cache is written only after a server-confirmed canonical response; the
+    // acknowledged (empty) layout is normalized back to the required outline
+    // (chapter_list is SYSTEM_REQUIRED and always present).
+    const cached = JSON.parse(localStorage.getItem("opentutor_blocks_course-1") || "null");
+    expect(cached).not.toBeNull();
+    expect(cached.blocks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "chapter_list", source: "SYSTEM_REQUIRED" }),
+      ]),
+    );
   });
 
   it("flushes immediately on pagehide", async () => {
@@ -79,7 +89,9 @@ describe("useBlockPersistence", () => {
     expect(mockUpdateCourseLayout).toHaveBeenCalledTimes(1);
     expect(mockUpdateCourseLayout).toHaveBeenCalledWith(
       "course-2",
-      expect.objectContaining({ blocks: [] }),
+      expect.objectContaining({
+        blocks: expect.any(Array),
+      }),
     );
   });
 
@@ -94,7 +106,9 @@ describe("useBlockPersistence", () => {
     expect(mockUpdateCourseLayout).toHaveBeenCalledTimes(1);
     expect(mockUpdateCourseLayout).toHaveBeenCalledWith(
       "course-3",
-      expect.objectContaining({ blocks: [] }),
+      expect.objectContaining({
+        blocks: expect.any(Array),
+      }),
     );
   });
 
@@ -122,11 +136,9 @@ describe("useBlockPersistence", () => {
 
     await act(async () => {});
 
-    expect(useWorkspaceStore.getState().spaceLayout.blocks).toEqual([
-      expect.objectContaining({
-        id: "server-notes",
-        type: "notes",
-      }),
-    ]);
+    expect(useWorkspaceStore.getState().spaceLayout.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "server-notes", type: "notes" }),
+      expect.objectContaining({ type: "chapter_list", isVisible: true }),
+    ]));
   });
 });

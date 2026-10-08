@@ -94,14 +94,14 @@ async def test_review_empty_course():
 
 
 @pytest.mark.asyncio
-async def test_review_never_practiced():
+async def test_review_never_practiced_is_not_a_review_item():
     cid, uid = _uid(), _uid()
     n = _node(cid, "Derivatives")
-    db = _mock_db([[n], [], []])
+    db = _mock_db([[n], [], [], []])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid)
-        assert len(r) == 1 and "not yet practiced" in r[0].reason
+        assert r == []
     finally:
         p.stop()
 
@@ -111,7 +111,7 @@ async def test_review_low_mastery():
     cid, uid = _uid(), _uid()
     n = _node(cid, "Integrals")
     m = _mastery(uid, n.id, score=0.2, pcount=3)
-    db = _mock_db([[n], [m], []])
+    db = _mock_db([[n], [], [m], []])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid)
@@ -127,7 +127,7 @@ async def test_review_prerequisite_weak():
     edge = _edge(main.id, prereq.id, "prerequisite")
     pm = _mastery(uid, prereq.id, score=0.3, pcount=2)
     mm = _mastery(uid, main.id, score=0.4, pcount=1)
-    db = _mock_db([[prereq, main], [pm, mm], [edge]])
+    db = _mock_db([[prereq, main], [], [pm, mm], [edge]])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid)
@@ -143,7 +143,7 @@ async def test_review_confusion_pair():
     a, b = _node(cid, "Mean"), _node(cid, "Median")
     edge = _edge(a.id, b.id, "confused_with")
     ma, mb = _mastery(uid, a.id, score=0.4, pcount=2), _mastery(uid, b.id, score=0.4, pcount=2)
-    db = _mock_db([[a, b], [ma, mb], [edge]])
+    db = _mock_db([[a, b], [], [ma, mb], [edge]])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid)
@@ -159,7 +159,7 @@ async def test_review_time_decay():
     n = _node(cid, "Limits")
     now = datetime.now(timezone.utc)
     m = _mastery(uid, n.id, score=0.7, pcount=5, stab=3.0, last=now - timedelta(days=10))
-    db = _mock_db([[n], [m], []])
+    db = _mock_db([[n], [], [m], []])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid)
@@ -174,7 +174,7 @@ async def test_review_well_mastered_skipped():
     n = _node(cid, "Addition")
     now = datetime.now(timezone.utc)
     m = _mastery(uid, n.id, score=0.95, pcount=20, stab=30.0, last=now - timedelta(days=1))
-    db = _mock_db([[n], [m], []])
+    db = _mock_db([[n], [], [m], []])
     p, _ = _settings_mock()
     try:
         assert await get_smart_review_session(db, uid, cid) == []
@@ -186,7 +186,8 @@ async def test_review_well_mastered_skipped():
 async def test_review_max_items_and_sort():
     cid, uid = _uid(), _uid()
     nodes = [_node(cid, f"C{i}") for i in range(15)]
-    db = _mock_db([nodes, [], []])
+    masteries = [_mastery(uid, node.id, score=0.2, pcount=1) for node in nodes]
+    db = _mock_db([nodes, [], masteries, []])
     p, _ = _settings_mock()
     try:
         r = await get_smart_review_session(db, uid, cid, max_items=5)

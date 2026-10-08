@@ -22,25 +22,15 @@ function makeCtx(overrides: Partial<UnlockContext> = {}): UnlockContext {
 describe("isBlockUnlocked", () => {
   it("always unlocks core block types", () => {
     const ctx = makeCtx();
-    for (const type of ["notes", "quiz", "flashcards", "chapter_list", "review"] as const) {
+    for (const type of ["notes", "quiz", "flashcards", "chapter_list", "review", "knowledge_graph", "forecast", "progress", "plan"] as const) {
       expect(isBlockUnlocked(type, ctx).unlocked).toBe(true);
     }
   });
 
-  it("unlocks knowledge_graph after 3+ source docs", () => {
-    expect(isBlockUnlocked("knowledge_graph", makeCtx({ sourceDocCount: 2 })).unlocked).toBe(false);
-    expect(isBlockUnlocked("knowledge_graph", makeCtx({ sourceDocCount: 3 })).unlocked).toBe(true);
-  });
-
-  it("unlocks plan with deadline or course_following mode", () => {
-    expect(isBlockUnlocked("plan", makeCtx()).unlocked).toBe(false);
+  it("always unlocks the study plan", () => {
+    expect(isBlockUnlocked("plan", makeCtx()).unlocked).toBe(true);
     expect(isBlockUnlocked("plan", makeCtx({ hasDeadline: true })).unlocked).toBe(true);
     expect(isBlockUnlocked("plan", makeCtx({ mode: "course_following" })).unlocked).toBe(true);
-  });
-
-  it("unlocks forecast after 50+ practice attempts", () => {
-    expect(isBlockUnlocked("forecast", makeCtx({ practiceAttempts: 49 })).unlocked).toBe(false);
-    expect(isBlockUnlocked("forecast", makeCtx({ practiceAttempts: 50 })).unlocked).toBe(true);
   });
 
   it("unlocks wrong_answers after first wrong answer", () => {
@@ -48,15 +38,9 @@ describe("isBlockUnlocked", () => {
     expect(isBlockUnlocked("wrong_answers", makeCtx({ hasWrongAnswer: true })).unlocked).toBe(true);
   });
 
-  it("unlocks agent_insight after 3+ sessions", () => {
-    expect(isBlockUnlocked("agent_insight", makeCtx({ sessionCount: 2 })).unlocked).toBe(false);
+  it("always shows an agent insight when the agent has a suggestion", () => {
+    expect(isBlockUnlocked("agent_insight", makeCtx({ sessionCount: 0 })).unlocked).toBe(true);
     expect(isBlockUnlocked("agent_insight", makeCtx({ sessionCount: 3 })).unlocked).toBe(true);
-  });
-
-  it("provides unlock hints for locked blocks", () => {
-    const result = isBlockUnlocked("knowledge_graph", makeCtx({ sourceDocCount: 1 }));
-    expect(result.unlocked).toBe(false);
-    expect(result.unlockHint).toContain("1/3");
   });
 
   it("always unlocks progress", () => {

@@ -10,6 +10,7 @@ tracking. The metadata schema is generic learning analytics, not domain-specific
 from dataclasses import dataclass, field
 import logging
 import math
+import re
 from typing import Any
 import uuid
 
@@ -22,8 +23,14 @@ from services.practice.annotation import (
     parse_question_array,
     validate_question_payload,
 )
+from services.content_text import is_generic_textbook_prompt, is_non_learning_question
 
 logger = logging.getLogger(__name__)
+
+# A practice set is one focused learning activity, not a question-bank dump.
+# Keep this shared service-level guard so LLM output, saved assistant output
+# and every router cannot accidentally create an overwhelming batch.
+MAX_GENERATED_QUESTIONS = 15
 
 # 8 question types
 QUESTION_TYPES = {
@@ -41,12 +48,20 @@ EXTRACTION_PROMPT = """You are an expert educator creating practice questions fr
 
 Given the content below, extract or generate practice questions. Follow these rules:
 
-1. Generate a mix of question types: mc (multiple choice), tf (true/false), short_answer, fill_blank, and coding (for programming/technical content)
-2. Each question should test understanding, not just recall
-3. For multiple choice, always provide exactly 4 options (A, B, C, D)
-4. Include the correct answer and a brief explanation
-5. Generate 3-8 questions depending on content length and complexity
-6. For EACH question, provide structured learning metadata:
+1. Generate only these learner-supported question types: mc (multiple choice), tf (true/false), short_answer, and fill_blank. Use coding only when the source explicitly teaches programming, code, or an algorithm implementation. Mathematics, physics, and other non-programming lessons must never be converted into Python/programming questions. Do not generate matching or select-all questions.
+2. Ask only about concepts, rules, examples, reasoning, or applications in the lesson body. Never ask for a textbook, chapter, unit, or section title/name, a table-of-contents entry, number of chapters, publisher, editor, author, ISBN, or other document metadata.
+3. Build a question blueprint before writing the questions. Identify the lesson's concrete knowledge points, prerequisites, worked examples, methods, and common mistakes. Every question must anchor to ONE named knowledge point from that blueprint; never write a generic "recognition" question merely because a sentence appears in the note.
+4. Use a layered practice mix inspired by high-quality Chinese junior-school workbooks:
+   - foundation (Layer 1): at most 30%; check a necessary concept or single-step skill
+   - improvement (Layer 2): at least 40%; require calculation, explanation, comparison, interpretation, or a two-step application
+   - challenge (Layer 3): at least 20% when the source is rich enough; vary a condition, combine concepts, diagnose an error, or transfer the method to a new situation
+   True/false questions may be used only for a high-value misconception and must be no more than ONE question in the batch. Do not use true/false for plain factual recognition.
+5. Match the subject and source affordances. If the lesson contains calculations, include a calculation/application question. If it contains an experiment, include an experiment-design or evidence question. If it contains a graph, table, geometry figure, number line, or data display, include an interpretation question. Use short_answer for worked calculations or reasoning when no dedicated UI type exists.
+6. Prefer original variants of the lesson's examples: change values, conditions, direction, representation, or context while preserving the exact knowledge boundary. Do not copy sentences from the note and turn them into trivial blanks.
+7. For multiple choice, always provide exactly 4 plausible options (A, B, C, D). Distractors must correspond to specific common mistakes, not random values.
+8. Include the correct answer and a child-friendly worked explanation. The explanation must contain the reasoning or calculation, the likely mistake, and a reusable method; giving only the final answer is invalid.
+9. Generate 6-8 questions for a normal lesson and 3-5 only for genuinely short source material.
+10. For EACH question, provide structured learning metadata:
    - difficulty_layer: 1 basic understanding, 2 standard application, 3 advanced/tricky transfer
    - core_concept: the main concept being tested
    - bloom_level: remember | understand | apply | analyze | evaluate | create
@@ -54,6 +69,18 @@ Given the content below, extract or generate practice questions. Follow these ru
    - layer_justification: one short reason for the difficulty_layer choice
    - skill_focus: what ability is being tested (for example recall, comparison, derivation, interpretation)
    - source_section: the section title if obvious from context
+   - source_anchor: the exact named knowledge point or sub-section in the provided source
+   - question_role: foundation | improvement | challenge
+   - solution_steps: an ordered list of reasoning/calculation steps
+   - common_mistake: the most likely wrong approach and why it fails
+   - method_summary: one reusable method sentence
+11. Write every learner-facing field (question, options, correct answer,
+   explanation, and metadata) in the requested output language. If no output
+   language is requested, use the language of the source material.
+12. Test only the lesson's academic concepts. Never make questions about the
+   publisher, editor, author, ISBN, copyright page, printing, or book metadata.
+13. Name the exact concept in every question. Do not ask vague questions such as
+   “课本中介绍了什么” or “本节学习了什么”.
 
 Output ONLY a valid JSON array with this structure:
 ```json
@@ -178,6 +205,20 @@ _MAX_NODE_ERRORS = 5
 _QUESTION_TYPE_SHARE_CAP = 0.6
 _QUESTION_TYPE_MIN_CAP = 2
 _SIMILARITY_DUPLICATE_THRESHOLD = 0.85
+_TRUE_FALSE_BATCH_CAP = 1
+_FOUNDATION_SHARE_CAP = 0.4
+
+_PROGRAMMING_SOURCE_RE = re.compile(
+    r"(?:python|javascript|typescript|java|c\+\+|编程|程序设计|代码|函数定义|"
+    r"算法实现|数据结构|递归程序|class\s+\w+|def\s+\w+\s*\(|console\.log|print\s*\()",
+    re.IGNORECASE,
+)
+
+
+def source_supports_coding(title: str, content: str) -> bool:
+    """Return whether the lesson itself explicitly teaches programming."""
+    source = f"{title}\n{content[:6000]}"
+    return bool(_PROGRAMMING_SOURCE_RE.search(source))
 
 
 @dataclass
@@ -214,6 +255,18 @@ class QuizExtractionOutcome:
         self.discarded_count += other.discarded_count
         self.warnings.extend(other.warnings)
         self.node_failures.extend(other.node_failures)
+
+
+def cap_question_batch(questions: list[Any], *, title: str) -> tuple[list[Any], int, list[str]]:
+    """Enforce the learner-facing batch limit at every persistence boundary."""
+    if len(questions) <= MAX_GENERATED_QUESTIONS:
+        return questions, 0, []
+    discarded = len(questions) - MAX_GENERATED_QUESTIONS
+    return (
+        questions[:MAX_GENERATED_QUESTIONS],
+        discarded,
+        [f"Kept the first {MAX_GENERATED_QUESTIONS} validated questions for {title}; {discarded} excess question(s) were not added."],
+    )
 
 
 @dataclass
@@ -302,6 +355,47 @@ def _enforce_type_balance(
     return kept, discarded, warnings
 
 
+def _enforce_quality_mix(
+    questions: list[dict[str, Any]],
+    *,
+    title: str,
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Remove excess recognition questions before a batch enters the bank.
+
+    Prompt instructions improve generation on average, but they are not a
+    guarantee.  This deterministic gate prevents a model from filling a lesson
+    with true/false or Layer-1 recall items.
+    """
+    if len(questions) < 3:
+        return questions, 0, []
+
+    max_foundation = max(1, math.floor(len(questions) * _FOUNDATION_SHARE_CAP))
+    tf_count = 0
+    foundation_count = 0
+    kept: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    discarded = 0
+
+    for question in questions:
+        question_type = str(question.get("question_type") or "")
+        layer = int(question.get("difficulty_layer") or 1)
+        if question_type == "tf":
+            if tf_count >= _TRUE_FALSE_BATCH_CAP:
+                discarded += 1
+                warnings.append(f"Dropped excess true/false recognition question in {title}.")
+                continue
+            tf_count += 1
+        if layer == 1:
+            if foundation_count >= max_foundation:
+                discarded += 1
+                warnings.append(f"Dropped excess Layer-1 recall question in {title}.")
+                continue
+            foundation_count += 1
+        kept.append(question)
+
+    return kept, discarded, warnings
+
+
 async def _repair_question(
     *,
     client: Any,
@@ -309,6 +403,7 @@ async def _repair_question(
     title: str,
     content: str,
     errors: list[str],
+    language: str | None = None,
 ) -> dict[str, Any] | None:
     source_excerpt = content[:3000]
     user_msg = (
@@ -317,6 +412,10 @@ async def _repair_question(
         f"Source excerpt:\n{source_excerpt}\n\n"
         f"Invalid question JSON:\n{question}"
     )
+    if language == "zh":
+        user_msg += "\n\nLearner language: Simplified Chinese. Rewrite every learner-facing field in Chinese."
+    elif language == "en":
+        user_msg += "\n\nLearner language: English. Rewrite every learner-facing field in English."
     try:
         repaired_raw, _ = await client.chat(_REPAIR_PROMPT, user_msg)
     except (ConnectionError, TimeoutError, ValueError, RuntimeError) as exc:
@@ -336,15 +435,24 @@ async def _prepare_question_batch(
     content: str,
     client: Any,
     allow_repair: bool,
+    language: str | None = None,
 ) -> _PreparedQuestionBatch:
     prepared = _PreparedQuestionBatch()
     seen_questions: set[str] = set()
 
+    coding_allowed = source_supports_coding(title, content)
     for question in questions:
-        validation = validate_question_payload(question, title=title, source="extracted")
+        validation = validate_question_payload(question, title=title, source="extracted", learner_language=language)
         normalized = validation.question
         errors = list(validation.errors)
         repaired = False
+
+        if normalized and normalized.get("question_type") == "coding" and not coding_allowed:
+            prepared.discarded_count += 1
+            prepared.warnings.append(
+                f"Dropped a coding question because {title} is not a programming lesson."
+            )
+            continue
 
         if errors and allow_repair:
             repaired_question = await _repair_question(
@@ -353,12 +461,14 @@ async def _prepare_question_batch(
                 title=title,
                 content=content,
                 errors=errors,
+                language=language,
             )
             if repaired_question is not None:
                 repaired_validation = validate_question_payload(
                     repaired_question,
                     title=title,
                     source="extracted",
+                    learner_language=language,
                 )
                 normalized = repaired_validation.question
                 errors = list(repaired_validation.errors)
@@ -367,6 +477,11 @@ async def _prepare_question_batch(
         if errors or normalized is None:
             prepared.discarded_count += 1
             prepared.errors.append("; ".join(errors[:3]) if errors else "question: validation failed")
+            continue
+
+        if is_non_learning_question(normalized["question"]) or is_generic_textbook_prompt(normalized["question"]):
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped non-lesson metadata question in {title}.")
             continue
 
         dedupe_key = build_question_dedupe_key(normalized["question"])
@@ -394,6 +509,15 @@ async def _prepare_question_batch(
     )
     prepared.discarded_count += type_balance_discards
     prepared.warnings.extend(type_balance_warnings)
+    prepared.questions, quality_discards, quality_warnings = _enforce_quality_mix(
+        prepared.questions,
+        title=title,
+    )
+    prepared.discarded_count += quality_discards
+    prepared.warnings.extend(quality_warnings)
+    prepared.questions, capped, cap_warnings = cap_question_batch(prepared.questions, title=title)
+    prepared.discarded_count += capped
+    prepared.warnings.extend(cap_warnings)
     return prepared
 
 
@@ -415,6 +539,11 @@ async def prepare_generated_questions(
         if validation.errors or normalized is None:
             prepared.discarded_count += 1
             prepared.errors.append("; ".join(validation.errors[:3]) if validation.errors else "question: validation failed")
+            continue
+
+        if is_non_learning_question(normalized["question"]) or is_generic_textbook_prompt(normalized["question"]):
+            prepared.discarded_count += 1
+            prepared.warnings.append(f"Dropped non-lesson generated question in {title}.")
             continue
 
         dedupe_key = build_question_dedupe_key(normalized["question"])
@@ -440,6 +569,15 @@ async def prepare_generated_questions(
     )
     prepared.discarded_count += type_balance_discards
     prepared.warnings.extend(type_balance_warnings)
+    prepared.questions, quality_discards, quality_warnings = _enforce_quality_mix(
+        prepared.questions,
+        title=title,
+    )
+    prepared.discarded_count += quality_discards
+    prepared.warnings.extend(quality_warnings)
+    prepared.questions, capped, cap_warnings = cap_question_batch(prepared.questions, title=title)
+    prepared.discarded_count += capped
+    prepared.warnings.extend(cap_warnings)
     return prepared
 
 
@@ -472,6 +610,8 @@ async def extract_questions(
     content_node_id: uuid.UUID | None = None,
     mode: str | None = None,
     difficulty: str | None = None,
+    language: str | None = None,
+    knowledge_blueprint: str | None = None,
 ) -> QuizExtractionOutcome:
     """Extract practice questions from content using LLM.
 
@@ -488,10 +628,30 @@ async def extract_questions(
     client = get_llm_client()
 
     user_msg = f"## {title}\n\n{content}"
+    if knowledge_blueprint:
+        user_msg += (
+            "\n\n## Curriculum knowledge blueprint\n"
+            f"{knowledge_blueprint}\n\n"
+            "Scope rule: every question's source_anchor and core_concept must match one of "
+            "these anchors. Relations may guide prerequisite or transfer questions, but must "
+            "not introduce content outside the provided lesson."
+        )
+    if not source_supports_coding(title, content):
+        user_msg += (
+            "\n\nSubject constraint: this source is not a programming lesson. "
+            "Do not ask the learner to write Python, code, functions, or programs. "
+            "Use only multiple-choice, true/false, fill-in-the-blank, or short-answer questions."
+        )
     if mode and mode in _MODE_QUIZ_HINTS:
         user_msg += _MODE_QUIZ_HINTS[mode]
     if difficulty and difficulty in _DIFFICULTY_HINTS:
         user_msg += _DIFFICULTY_HINTS[difficulty]
+    if language == "zh":
+        user_msg += "\n\nOutput language: Simplified Chinese. Write every learner-facing field in Chinese."
+    elif language == "en":
+        user_msg += "\n\nOutput language: English. Write every learner-facing field in English."
+    else:
+        user_msg += "\n\nOutput language: Use the same language as the source material."
 
     response, _ = await client.chat(
         EXTRACTION_PROMPT,
@@ -517,6 +677,7 @@ async def extract_questions(
         content=content,
         client=client,
         allow_repair=True,
+        language=language,
     )
 
     validated_count = len(prepared.questions)

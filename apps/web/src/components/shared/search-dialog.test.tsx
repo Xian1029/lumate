@@ -63,19 +63,19 @@ describe("SearchDialog", () => {
   it("renders dialog when open", () => {
     render(<SearchDialog open={true} onClose={vi.fn()} courseId="course-1" />);
     expect(
-      screen.getByRole("dialog", { name: "Search notes and concepts" })
+      screen.getByRole("dialog", { name: "搜索笔记与概念" })
     ).toBeInTheDocument();
   });
 
   it("renders search input with placeholder", () => {
     render(<SearchDialog open={true} onClose={vi.fn()} courseId="course-1" />);
-    expect(screen.getByPlaceholderText("Search notes, concepts...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("搜索笔记、概念……")).toBeInTheDocument();
   });
 
   it("shows prompt text when no query entered", () => {
     render(<SearchDialog open={true} onClose={vi.fn()} courseId="course-1" />);
     expect(
-      screen.getByText("Type to search through your notes and concepts")
+      screen.getByText("输入以搜索你的笔记和概念")
     ).toBeInTheDocument();
   });
 
@@ -83,7 +83,7 @@ describe("SearchDialog", () => {
     const { user } = render(
       <SearchDialog open={true} onClose={vi.fn()} courseId="course-1" />
     );
-    const input = screen.getByPlaceholderText("Search notes, concepts...");
+    const input = screen.getByPlaceholderText("搜索笔记、概念……");
     await user.type(input, "Accounting");
     await waitFor(() => {
       expect(screen.getByText("Introduction to Accounting")).toBeInTheDocument();
@@ -94,10 +94,10 @@ describe("SearchDialog", () => {
     const { user } = render(
       <SearchDialog open={true} onClose={vi.fn()} courseId="course-1" />
     );
-    const input = screen.getByPlaceholderText("Search notes, concepts...");
+    const input = screen.getByPlaceholderText("搜索笔记、概念……");
     await user.type(input, "zzzznotfound");
     await waitFor(() => {
-      expect(screen.getByText(/No results found/)).toBeInTheDocument();
+      expect(screen.getByText(/未找到/)).toBeInTheDocument();
     });
   });
 });

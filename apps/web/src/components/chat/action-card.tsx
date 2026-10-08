@@ -19,6 +19,21 @@ interface ActionCardProps {
   };
 }
 
+/** 内部动作类型兜底中文标签，避免把英文枚举泄露给用户。 */
+const ACTION_LABELS: Record<string, string> = {
+  data_updated: "内容已更新",
+  focus_topic: "聚焦知识点",
+  add_block: "添加模块",
+  remove_block: "移除模块",
+  reorder_blocks: "调整模块顺序",
+  resize_block: "调整模块大小",
+  apply_template: "应用模板",
+  agent_insight: "智能建议",
+  set_learning_mode: "设置学习模式",
+  suggest_mode: "推荐模式",
+  unknown: "查看详情",
+};
+
 /** Map action types to their target workspace section and icon. */
 const ACTION_MAP: Record<
   string,
@@ -98,26 +113,27 @@ export function ActionCard({ action }: ActionCardProps) {
   const handleClick = () => {
     const VALID_SECTIONS: Set<string> = new Set(["notes", "practice", "analytics", "plan"]);
     if (action.type === "data_updated") {
-      const requested = action.label ?? "";
+      const requested = typeof action.payload?.section === "string" ? action.payload.section : action.label ?? "";
       if (VALID_SECTIONS.has(requested)) {
         setActiveSection(requested as SectionId);
         return;
       }
     }
     if (action.type === "focus_topic" && action.label) {
-      setSelectedNodeId(action.label);
+      const nodeId = action.payload?.nodeId;
+      if (typeof nodeId === "string" && nodeId) setSelectedNodeId(nodeId);
     }
     setActiveSection(mapping.section);
   };
 
   const label =
-    action.label ?? action.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    action.label ?? ACTION_LABELS[action.type] ?? "查看详情";
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      aria-label={`Action: ${label}`}
+      aria-label={label}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium card-shadow",
         "transition-all hover:opacity-80 active:opacity-60",

@@ -241,10 +241,12 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
             job = await db.get(IngestionJob, job_id)
             skipped = is_noop_provider()
             if job and not skipped:
+                # Main ingestion already completed before this background
+                # task began. Only expose indexing as a secondary status.
                 _set_job_phase(
                     job,
-                    status="embedding",
-                    progress_percent=max(job.progress_percent or 0, 92),
+                    status="completed",
+                    progress_percent=100,
                     embedding_status="running",
                     nodes_created=job.nodes_created,
                 )
@@ -275,18 +277,19 @@ async def _background_embed(course_id: uuid.UUID, job_id: uuid.UUID, user_id: uu
             raise results[0]
         if isinstance(results[1], Exception):
             logger.debug("Auto-generate failed (non-critical): %s", results[1])
-    except (SQLAlchemyError, AppError, OSError, ValueError) as e:
+    except Exception as e:
         try:
             async with async_session() as db:
                 job = await db.get(IngestionJob, job_id)
                 if job:
+                    # A search-index failure must not make usable material
+                    # appear failed or keep the learner-facing spinner alive.
                     _set_job_phase(
                         job,
-                        status="failed",
-                        progress_percent=job.progress_percent or 90,
+                        status="completed",
+                        progress_percent=100,
                         embedding_status="failed",
                         nodes_created=job.nodes_created,
-                        error_message=str(e),
                     )
                     await db.commit()
         except SQLAlchemyError:

@@ -245,6 +245,7 @@ def _register_variant(registry: ProviderRegistry, provider: str, variant_model: 
             variant_model,
             base_url=str(primary_client.client.base_url) if primary_client.client.base_url else None,
             name=f"{provider}-{hint}",
+            trust_env=settings.llm_trust_env,
         )
         registry.register_variant(hint, variant)
     elif isinstance(primary_client, AnthropicClient):
@@ -291,7 +292,13 @@ def _build_registry() -> ProviderRegistry:
         if not api_key:
             continue
         pmodel = model if provider == name else _resolve_model(model, default_model, prefixes)
-        client = OpenAIClient(api_key, pmodel, base_url=base_url, name=name)
+        client = OpenAIClient(
+            api_key,
+            pmodel,
+            base_url=base_url,
+            name=name,
+            trust_env=settings.llm_trust_env,
+        )
         registry.register(name, client, primary=(provider == name))
 
     # --- Anthropic (separate client class) ---
@@ -310,13 +317,20 @@ def _build_registry() -> ProviderRegistry:
             ollama_model,
             base_url=f"{settings.ollama_base_url}/v1",
             name="ollama",
+            trust_env=settings.llm_trust_env,
         )
         registry.register("ollama", ollama_client, primary=True)
 
     # --- Local inference backends (only when selected) ---
     for name, dummy_key, base_url_attr in _LOCAL_PROVIDERS:
         if provider == name:
-            client = OpenAIClient(dummy_key, model, base_url=getattr(settings, base_url_attr), name=name)
+            client = OpenAIClient(
+                dummy_key,
+                model,
+                base_url=getattr(settings, base_url_attr),
+                name=name,
+                trust_env=settings.llm_trust_env,
+            )
             registry.register(name, client, primary=True)
 
     # --- Generic OpenAI-compatible endpoint ---
@@ -324,7 +338,9 @@ def _build_registry() -> ProviderRegistry:
         client = OpenAIClient(
             settings.custom_llm_api_key or "none",
             settings.custom_llm_model or model,
-            base_url=settings.custom_llm_base_url, name="custom",
+            base_url=settings.custom_llm_base_url,
+            name="custom",
+            trust_env=settings.llm_trust_env,
         )
         registry.register("custom", client, primary=(provider == "custom"))
 

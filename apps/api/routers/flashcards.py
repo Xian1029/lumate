@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from libs.exceptions import AppError, NotFoundError, reraise_as_app_error
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,8 @@ class GenerateRequest(BaseModel):
     content_node_id: uuid.UUID | None = None
     count: int = 5
     mode: str | None = None  # learning mode: course_following, self_paced, exam_prep, maintenance
+    language: str | None = None
+    exclude_fronts: list[str] = Field(default_factory=list, max_length=30)
 
 
 class ReviewRequest(BaseModel):
@@ -44,14 +46,21 @@ class SaveGeneratedFlashcardsRequest(BaseModel):
 
 
 @router.post("/generate", summary="Generate flashcards", description="Generate flashcards from course content using LLM and FSRS scheduling.")
-async def generate_flashcards(body: GenerateRequest, db: AsyncSession = Depends(get_db)):
+async def generate_flashcards(
+    body: GenerateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Generate flashcards from course content using LLM + FSRS."""
     from services.spaced_repetition.flashcards import generate_flashcards
 
+    await get_course_or_404(db, body.course_id, user_id=user.id)
     await ensure_llm_ready("Flashcard generation")
     try:
         cards = await generate_flashcards(
-            db, body.course_id, body.content_node_id, body.count, mode=body.mode
+            db, body.course_id, body.content_node_id, body.count,
+            mode=body.mode, language=body.language, user_id=user.id,
+            exclude_fronts=body.exclude_fronts,
         )
     except (ConnectionError, TimeoutError, ValueError, KeyError, RuntimeError) as exc:
         reraise_as_app_error(exc, "Flashcard generation failed")
@@ -71,6 +80,28 @@ async def review_flashcard_endpoint(
 
     updated_card = review_flashcard(body.card, body.rating)
 
+    # Backfill concept metadata for cards created before graph linkage existed.
+    course_id = updated_card.get("course_id")
+    concept_names = updated_card.get("knowledge_points") or updated_card.get("concepts") or []
+    if isinstance(concept_names, str):
+        concept_names = [concept_names]
+    if not concept_names and course_id:
+        from models.knowledge_graph import KnowledgeNode
+
+        cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
+        node_result = await db.execute(
+            select(KnowledgeNode).where(KnowledgeNode.course_id == cid)
+        )
+        visible_text = f"{updated_card.get('front', '')} {updated_card.get('back', '')}".lower()
+        matches = sorted(
+            (node.name for node in node_result.scalars().all() if node.name.lower() in visible_text),
+            key=len,
+            reverse=True,
+        )[:5]
+        if matches:
+            concept_names = matches
+            updated_card["knowledge_points"] = matches
+
     # Persist FSRS state back to the GeneratedAsset in the database.
     # Note: read-modify-write on JSON column without row-level locking.
     # Safe under SQLite (serialized writes) but would need SELECT ... FOR UPDATE
@@ -89,7 +120,11 @@ async def review_flashcard_endpoint(
         if asset and asset.content:
             cards = asset.content.get("cards", [])
             if 0 <= body.card_index < len(cards):
-                cards[body.card_index]["fsrs"] = updated_card.get("fsrs", {})
+                cards[body.card_index] = {
+                    **cards[body.card_index],
+                    "fsrs": updated_card.get("fsrs", {}),
+                    "knowledge_points": updated_card.get("knowledge_points", []),
+                }
                 # SQLAlchemy needs the JSON column reassigned to detect the mutation
                 asset.content = {**asset.content, "cards": cards}
 
@@ -110,17 +145,23 @@ async def review_flashcard_endpoint(
         logger.exception("Flashcard learning event emission failed (best-effort)")
 
     # Sync flashcard review to LOOM concept mastery (bridges flashcard ↔ knowledge graph)
-    concept_names = body.card.get("knowledge_points") or body.card.get("concepts") or []
-    if isinstance(concept_names, str):
-        concept_names = [concept_names]
-    course_id = body.card.get("course_id")
     if concept_names and course_id:
         try:
             from services.loom_mastery import update_concept_mastery
             is_correct = body.rating >= 3  # Good or Easy = correct recall
             cid = uuid.UUID(course_id) if isinstance(course_id, str) else course_id
+            raw_content_node_id = updated_card.get("content_node_id")
+            linked_content_node_id = (
+                uuid.UUID(raw_content_node_id)
+                if isinstance(raw_content_node_id, str) and raw_content_node_id
+                else raw_content_node_id
+            )
             for concept in concept_names[:5]:  # Cap to avoid excessive DB ops
-                await update_concept_mastery(db, user.id, str(concept), cid, correct=is_correct, question_type="free_response")
+                await update_concept_mastery(
+                    db, user.id, str(concept), cid,
+                    correct=is_correct, question_type="free_response",
+                    content_node_id=linked_content_node_id,
+                )
         except ImportError:
             logger.warning("Flashcard → LOOM mastery sync failed: services.loom_mastery not found")
         except (SQLAlchemyError, ValueError, KeyError):
@@ -300,22 +341,22 @@ async def get_due_flashcards(
 
     for batch in batches:
         cards = (batch.content or {}).get("cards", [])
-        for card in cards:
+        for card_index, card in enumerate(cards):
             fsrs = card.get("fsrs")
             if not fsrs:
                 # New card — always due
-                due_cards.append({**card, "batch_id": str(batch.id)})
+                due_cards.append({**card, "batch_id": str(batch.batch_id), "card_index": card_index})
             else:
                 due_str = fsrs.get("due")
                 if due_str:
                     try:
                         due_dt = datetime.fromisoformat(due_str.replace("Z", "+00:00"))
                         if due_dt <= now:
-                            due_cards.append({**card, "batch_id": str(batch.id)})
+                            due_cards.append({**card, "batch_id": str(batch.batch_id), "card_index": card_index})
                     except (ValueError, TypeError):
-                        due_cards.append({**card, "batch_id": str(batch.id)})
+                        due_cards.append({**card, "batch_id": str(batch.batch_id), "card_index": card_index})
                 else:
-                    due_cards.append({**card, "batch_id": str(batch.id)})
+                    due_cards.append({**card, "batch_id": str(batch.batch_id), "card_index": card_index})
 
     # Adjust card order based on cognitive load (easier cards first when loaded)
     try:

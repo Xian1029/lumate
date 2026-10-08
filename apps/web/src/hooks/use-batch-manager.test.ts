@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useBatchManager } from "./use-batch-manager";
@@ -104,7 +105,7 @@ describe("useBatchManager", () => {
     });
 
     expect(saveFn).toHaveBeenCalled();
-    expect(typedToast.success).toHaveBeenCalledWith("Saved successfully");
+    expect(typedToast.success).toHaveBeenCalledWith(t("ui.saved_successfully"));
   });
 
   it("wrapSave shows replaced toast when result.replaced is true", async () => {
@@ -122,7 +123,7 @@ describe("useBatchManager", () => {
       await result.current.wrapSave(saveFn);
     });
 
-    expect(typedToast.success).toHaveBeenCalledWith("Replaced with version 5");
+    expect(typedToast.success).toHaveBeenCalledWith("已更新为第 5 版");
   });
 
   it("wrapSave shows error toast on failure", async () => {

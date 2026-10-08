@@ -2,11 +2,20 @@
 
 import { useT } from "@/lib/i18n-context";
 import { Button } from "@/components/ui/button";
+import { ApiError } from "@/lib/api/client";
 import { AlertCircle, WifiOff, ShieldAlert, ServerCrash, Clock } from "lucide-react";
 
 type ErrorCategory = "network" | "auth" | "server" | "rateLimit" | "generic";
 
 function classifyError(error: Error): ErrorCategory {
+  // ApiError 携带 HTTP 状态码，优先按状态码分类。
+  if (error instanceof ApiError) {
+    const s = error.status;
+    if (s === 401 || s === 403) return "auth";
+    if (s === 429) return "rateLimit";
+    if (s >= 500) return "server";
+    return "generic";
+  }
   const msg = error.message?.toLowerCase() ?? "";
   // Network errors: TypeError from fetch, or explicit network mentions
   if (error instanceof TypeError && (msg.includes("fetch") || msg.includes("network"))) {
@@ -67,11 +76,6 @@ export function PageError({ error, reset, section }: PageErrorProps) {
         <p className="text-sm text-muted-foreground mb-1">
           {hint}
         </p>
-        {error.message && (
-          <p className="text-xs text-muted-foreground/70 mb-4">
-            {error.message}
-          </p>
-        )}
         <Button onClick={reset} variant="default" size="sm">
           {t("error.retry")}
         </Button>

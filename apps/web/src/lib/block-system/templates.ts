@@ -1,4 +1,4 @@
-import type { BlockInstance, SpaceLayout, BlockType, BlockSize, LearningMode } from "./types";
+import { defaultBlockSource, type BlockInstance, type SpaceLayout, type BlockType, type BlockSize, type LearningMode } from "./types";
 
 /** Helper to create a block instance for template definitions. */
 function b(
@@ -13,17 +13,17 @@ function b(
     position,
     size,
     config,
-    visible: true,
-    source: "template",
+    isVisible: true,
+    isPinned: false,
+    source: defaultBlockSource(type),
   };
 }
 
 export interface TemplateDefinition {
   id: string;
-  name: string;
-  nameZh: string;
-  description: string;
-  descriptionZh: string;
+  /** Translation keys are resolved by the consuming screen at render time. */
+  nameKey: string;
+  descriptionKey: string;
   /** Default learning mode attached to this template. */
   defaultMode: LearningMode;
   blocks: Array<Omit<BlockInstance, "id"> & { id: string }>;
@@ -33,73 +33,70 @@ export interface TemplateDefinition {
 export const TEMPLATES: Record<string, TemplateDefinition> = {
   stem_student: {
     id: "stem_student",
-    name: "STEM Student",
-    nameZh: "理工科学生",
-    description: "Step-by-step notes, adaptive quizzes, knowledge graph",
-    descriptionZh: "分步笔记、自适应测验、知识图谱",
+    nameKey: "ui.tpl_stem",
+    descriptionKey: "ui.tpl_step",
     defaultMode: "course_following",
     columns: 2,
     blocks: [
       b("chapter_list", "full", {}),
-      b("notes", "large", { note_format: "step_by_step" }),
+      b("notes", "full", { note_format: "step_by_step" }),
+      b("progress", "full"),
       b("quiz", "medium", { difficulty: "adaptive" }),
       b("knowledge_graph", "medium"),
-      b("progress", "small"),
+      b("forecast", "full"),
     ],
   },
   humanities_scholar: {
     id: "humanities_scholar",
-    name: "Humanities Scholar",
-    nameZh: "人文学者",
-    description: "Rich narrative notes, review sessions, reading progress",
-    descriptionZh: "叙事性笔记、复习环节、阅读进度",
+    nameKey: "ui.tpl_humanities",
+    descriptionKey: "ui.tpl_narrative",
     defaultMode: "course_following",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
-      b("notes", "large", { note_format: "summary" }),
+      b("notes", "full", { note_format: "summary" }),
+      b("progress", "full"),
       b("review", "medium"),
-      b("progress", "small"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
   visual_learner: {
     id: "visual_learner",
-    name: "Visual Learner",
-    nameZh: "视觉学习者",
-    description: "Knowledge graph prominent, mind map notes, visual aids",
-    descriptionZh: "知识图谱突出、思维导图笔记、视觉辅助",
+    nameKey: "ui.tpl_visual_learner",
+    descriptionKey: "ui.tpl_visual",
     defaultMode: "self_paced",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
+      b("notes", "full", { note_format: "mind_map" }),
+      b("progress", "full"),
       b("knowledge_graph", "large"),
-      b("notes", "medium", { note_format: "mind_map" }),
       b("quiz", "medium", { difficulty: "adaptive" }),
-      b("progress", "small"),
+      b("forecast", "full"),
     ],
   },
   quick_reviewer: {
     id: "quick_reviewer",
-    name: "Quick Reviewer",
-    nameZh: "快速复习",
-    description: "Quiz-heavy, flashcards, error analysis",
-    descriptionZh: "大量刷题、闪卡、错题分析",
+    nameKey: "ui.tpl_quick_reviewer",
+    descriptionKey: "ui.tpl_quiz",
     defaultMode: "exam_prep",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
+      b("notes", "full"),
+      b("progress", "full"),
       b("quiz", "large", { difficulty: "hard" }),
       b("flashcards", "medium"),
       b("wrong_answers", "medium"),
-      b("progress", "small"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
   blank_canvas: {
     id: "blank_canvas",
-    name: "Blank Canvas",
-    nameZh: "空白画布",
-    description: "Start from scratch and build your own space.",
-    descriptionZh: "从零开始，自定义你的学习空间。",
+    nameKey: "ui.tpl_blank",
+    descriptionKey: "ui.tpl_scratch",
     defaultMode: "self_paced",
     columns: 2,
     blocks: [],
@@ -121,76 +118,87 @@ export const TEMPLATE_LIST = TEMPLATE_DISPLAY_ORDER.map((id) => TEMPLATES[id]);
 
 export interface LearningModeDefinition {
   id: LearningMode;
-  name: string;
-  nameZh: string;
-  description: string;
-  descriptionZh: string;
   icon: string;
   /** Default block layout for this mode. */
   blocks: Array<Omit<BlockInstance, "id"> & { id: string }>;
   columns: 1 | 2 | 3;
 }
 
+/**
+ * Resolve display copy at render time. The stable mode ID is what gets saved
+ * with a course, so a language change never changes behavior or layout.
+ */
+export const LEARNING_MODE_TRANSLATION_KEYS: Record<
+  LearningMode,
+  { label: string; description: string; badge: string }
+> = {
+  course_following: { label: "mode.course_following", description: "mode.course_following.desc", badge: "mode.badge.course_following" },
+  self_paced: { label: "mode.self_paced", description: "mode.self_paced.desc", badge: "mode.badge.self_paced" },
+  exam_prep: { label: "mode.exam_prep", description: "mode.exam_prep.desc", badge: "mode.badge.exam_prep" },
+  maintenance: { label: "mode.maintenance", description: "mode.maintenance.desc", badge: "mode.badge.maintenance" },
+};
+
 export const LEARNING_MODES: Record<LearningMode, LearningModeDefinition> = {
   course_following: {
     id: "course_following",
-    name: "Course Following",
-    nameZh: "跟课模式",
-    description: "Timeline-driven. Deadlines, lecture notes, and syllabus tracking.",
-    descriptionZh: "按时间线驱动，追踪截止日期、课堂笔记和教学大纲。",
     icon: "GraduationCap",
     columns: 2,
     blocks: [
       b("chapter_list", "full"),
-      b("notes", "large"),
+      b("notes", "full"),
+      b("progress", "full"),
       b("quiz", "medium"),
       b("flashcards", "medium"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
   self_paced: {
     id: "self_paced",
-    name: "Self-Paced",
-    nameZh: "自学模式",
-    description: "Exploration-driven. Notes, flashcards, and progress tracking.",
-    descriptionZh: "以探索为驱动，笔记、闪卡与进度追踪。",
     icon: "Compass",
     columns: 2,
     blocks: [
-      b("notes", "large"),
-      b("flashcards", "medium"),
-      b("progress", "medium"),
+      b("chapter_list", "full"),
+      b("notes", "full"),
+      b("progress", "full"),
+      b("flashcards", "full"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
   exam_prep: {
     id: "exam_prep",
-    name: "Exam Prep",
-    nameZh: "备考模式",
-    description: "Practice-heavy. Quiz, progress tracking, and study planning.",
-    descriptionZh: "大量练习，聚焦测验、进度追踪与学习计划。",
     icon: "Clock",
     columns: 2,
     blocks: [
+      b("chapter_list", "full"),
+      b("notes", "full", { note_format: "summary", purpose: "exam_review" }),
       b("quiz", "large", { difficulty: "hard" }),
-      b("progress", "medium"),
-      b("plan", "medium"),
+      b("progress", "full"),
+      b("plan", "full"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
   maintenance: {
     id: "maintenance",
-    name: "Maintenance",
-    nameZh: "维护模式",
-    description: "Minimal. LECTOR review and knowledge retention only.",
-    descriptionZh: "极简模式，仅保留 LECTOR 复习与知识保持。",
     icon: "Shield",
     columns: 2,
     blocks: [
+      b("chapter_list", "full"),
       b("review", "large"),
       b("flashcards", "medium"),
+      b("progress", "full"),
+      b("knowledge_graph", "full"),
+      b("forecast", "full"),
     ],
   },
 };
 
-export const LEARNING_MODE_LIST = Object.values(LEARNING_MODES);
+/** User-selectable modes. Maintenance remains only for legacy data migration. */
+export const LEARNING_MODE_LIST = Object.values(LEARNING_MODES).filter(
+  (mode) => mode.id !== "maintenance",
+);
 
 /** Generate a SpaceLayout from a template, assigning unique IDs and positions. */
 export function buildLayoutFromTemplate(templateId: string): SpaceLayout | null {
@@ -213,10 +221,11 @@ export function buildLayoutFromTemplate(templateId: string): SpaceLayout | null 
 
 /** Generate a SpaceLayout from a learning mode, assigning unique IDs and positions. */
 export function buildLayoutFromMode(mode: LearningMode): SpaceLayout {
-  const def = LEARNING_MODES[mode];
+  const effectiveMode: LearningMode = mode === "maintenance" ? "self_paced" : mode;
+  const def = LEARNING_MODES[effectiveMode];
   const blocks: BlockInstance[] = def.blocks.map((block, index) => ({
     ...block,
-    id: `mode-${mode}-${block.type}-${index}`,
+    id: `mode-${effectiveMode}-${block.type}-${index}`,
     position: index,
   }));
 
@@ -224,6 +233,6 @@ export function buildLayoutFromMode(mode: LearningMode): SpaceLayout {
     templateId: null,
     blocks,
     columns: def.columns,
-    mode,
+    mode: effectiveMode,
   };
 }

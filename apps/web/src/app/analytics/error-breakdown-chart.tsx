@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import {
   PieChart,
   Pie,
@@ -34,7 +35,7 @@ export function ErrorBreakdownChart({ errorBreakdown }: ErrorBreakdownChartProps
 
   return (
     <section className="rounded-xl border border-border bg-card p-4">
-      <h2 className="font-medium mb-4 text-foreground">Error Category Breakdown</h2>
+      <h2 className="font-medium mb-4 text-foreground">{t("ui.error_category_breakdown")}</h2>
       {data.length > 0 ? (
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
@@ -60,7 +61,7 @@ export function ErrorBreakdownChart({ errorBreakdown }: ErrorBreakdownChartProps
           </ResponsiveContainer>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground py-8 text-center">No error data yet</p>
+        <p className="text-sm text-muted-foreground py-8 text-center">{t("ui.no_error_data_yet")}</p>
       )}
     </section>
   );

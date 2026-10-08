@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 import type { BlockType, LearningMode } from "./types";
 
 /**
@@ -25,6 +26,7 @@ export interface UnlockContext {
 /** Block types that are always available regardless of unlock state. */
 const ALWAYS_AVAILABLE: BlockType[] = [
   "notes", "quiz", "flashcards", "chapter_list", "review",
+  "knowledge_graph", "forecast", "progress", "plan", "agent_insight",
 ];
 
 /**
@@ -40,30 +42,10 @@ export function isBlockUnlocked(
   }
 
   switch (type) {
-    case "knowledge_graph":
-      return ctx.sourceDocCount >= 3
-        ? { unlocked: true }
-        : { unlocked: false, reason: "Unlocks after uploading 3+ source documents", unlockHint: `${ctx.sourceDocCount}/3 documents` };
-
-    case "plan":
-      return ctx.hasDeadline || ctx.mode === "course_following"
-        ? { unlocked: true }
-        : { unlocked: false, reason: "Unlocks after setting a deadline or enabling Course Following mode", unlockHint: "Set a deadline to unlock" };
-
-    case "forecast":
-      return ctx.practiceAttempts >= 50
-        ? { unlocked: true }
-        : { unlocked: false, reason: "Unlocks after 50+ practice attempts", unlockHint: `${ctx.practiceAttempts}/50 attempts` };
-
     case "wrong_answers":
       return ctx.hasWrongAnswer
         ? { unlocked: true }
-        : { unlocked: false, reason: "Unlocks after your first incorrect answer", unlockHint: "Answer a question incorrectly to unlock" };
-
-    case "agent_insight":
-      return ctx.sessionCount >= 3
-        ? { unlocked: true }
-        : { unlocked: false, reason: "Unlocks after 3+ learning sessions", unlockHint: `${ctx.sessionCount}/3 sessions` };
+        : { unlocked: false, reason: t("ui.unlock_first_wrong"), unlockHint: t("ui.unlock_wrong_ans") };
 
     case "progress":
       return { unlocked: true };

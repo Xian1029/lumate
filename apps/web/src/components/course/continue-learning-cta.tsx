@@ -1,53 +1,32 @@
 "use client";
+import { t, tf } from "@/lib/i18n";
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkles, ArrowRight, PlayCircle } from "lucide-react";
-import type { ContentNode } from "@/lib/api";
+import { getLearningHomeOverview, type HomeLearningSpace } from "@/lib/api";
 
 interface ContinueLearningCtaProps {
   courseId: string;
-  nodes: ContentNode[];
 }
 
-function collectAllContentNodes(nodes: ContentNode[]): ContentNode[] {
-  const result: ContentNode[] = [];
-  for (const node of nodes) {
-    if (node.content?.trim()) result.push(node);
-    if (node.children?.length) result.push(...collectAllContentNodes(node.children));
-  }
-  return result;
-}
+export function ContinueLearningCta({ courseId }: ContinueLearningCtaProps) {
+  const [space, setSpace] = useState<HomeLearningSpace | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getLearningHomeOverview()
+      .then((overview) => { if (live) setSpace(overview.learning_spaces.find((item) => item.id === courseId) ?? null); })
+      .catch(() => { if (live) setSpace(null); });
+    return () => { live = false; };
+  }, [courseId]);
 
-export function ContinueLearningCta({ courseId, nodes }: ContinueLearningCtaProps) {
-  const { targetNode, isResume } = useMemo(() => {
-    const allNodes = collectAllContentNodes(nodes);
-    if (allNodes.length === 0) return { targetNode: null, isResume: false };
-
-    // Check localStorage for last visited node
-    try {
-      const lastNodeId = localStorage.getItem(`opentutor_last_node_${courseId}`);
-      if (lastNodeId) {
-        const lastIndex = allNodes.findIndex((n) => n.id === lastNodeId);
-        if (lastIndex >= 0) {
-          // Link to the next node after the last visited, or the last one itself if at end
-          const nextIndex = Math.min(lastIndex + 1, allNodes.length - 1);
-          return { targetNode: allNodes[nextIndex], isResume: true };
-        }
-      }
-    } catch (e) {
-      console.warn("[ContinueLearningCta] Failed to read localStorage:", e);
-    }
-
-    return { targetNode: allNodes[0], isResume: false };
-  }, [nodes, courseId]);
-
-  if (!targetNode) return null;
+  if (!space) return null;
+  const isResume = space.status === "IN_PROGRESS";
 
   return (
     <Link
-      href={`/course/${courseId}/unit/${targetNode.id}`}
-      aria-label={`${isResume ? "Continue" : "Start"} learning: ${targetNode.title}`}
+      href={space.target_route}
+      aria-label={tf(isResume ? "ui.continue_learning_aria" : "ui.start_learning_aria", { title: space.current_node_title || space.name })}
       className="flex items-center gap-4 p-4 rounded-2xl bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors group card-lift"
     >
       <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/10 shrink-0">
@@ -55,9 +34,9 @@ export function ContinueLearningCta({ courseId, nodes }: ContinueLearningCtaProp
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground">
-          {isResume ? "Continue Learning" : "Start Learning"}
+          {isResume ? t("ui.continue_learning") : t("ui.start_learning")}
         </p>
-        <p className="text-xs text-muted-foreground truncate">{targetNode.title}</p>
+        <p className="text-xs text-muted-foreground truncate">{space.current_node_title || "从第一个可学习内容开始"}</p>
       </div>
       <ArrowRight className="size-4 text-primary shrink-0 group-hover:translate-x-1 transition-transform" />
     </Link>

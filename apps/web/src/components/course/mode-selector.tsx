@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import { GraduationCap, Compass, Clock, Shield, ChevronDown } from "lucide-react";
 import { syncCourseSpaceLayout } from "@/lib/block-system/layout-sync";
 import { useWorkspaceStore } from "@/store/workspace";
-import { LEARNING_MODE_LIST } from "@/lib/block-system/templates";
+import { LEARNING_MODE_LIST, LEARNING_MODE_TRANSLATION_KEYS } from "@/lib/block-system/templates";
 import type { LearningMode } from "@/lib/block-system/types";
 import { useT } from "@/lib/i18n-context";
 
@@ -40,15 +41,38 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
   const courseId = (params?.id as string) ?? "";
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<LearningMode | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const currentMode = useWorkspaceStore((s) => s.spaceLayout.mode);
   const setLearningMode = useWorkspaceStore((s) => s.setLearningMode);
 
+  // 打开时根据 trigger 位置计算 portal 坐标；滚动/缩放时关闭
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const updatePos = () => {
+      const r = triggerRef.current!.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: r.right - 280 });
+    };
+    updatePos();
+    const onScroll = () => setOpen(false);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        triggerRef.current && !triggerRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
         setOpen(false);
         setConfirming(null);
       }
@@ -78,8 +102,9 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
   const CurrentIcon = currentMode ? MODE_ICONS[currentMode] : GraduationCap;
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => { setOpen((v) => !v); setConfirming(null); }}
         className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs hover:bg-muted/50 transition-colors"
@@ -92,7 +117,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
           <>
             <CurrentIcon className={`size-3.5 ${MODE_COLORS[currentMode]}`} />
             <span className={`hidden sm:inline ${MODE_COLORS[currentMode]} font-medium`}>
-              {t(`mode.badge.${currentMode}`)}
+              {t(LEARNING_MODE_TRANSLATION_KEYS[currentMode].badge)}
             </span>
           </>
         ) : (
@@ -104,15 +129,20 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
         <ChevronDown className="size-3 text-muted-foreground" />
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-[280px] rounded-2xl bg-popover p-1.5 card-shadow animate-fade-in">
+      {open && typeof document !== "undefined" && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999 }}
+          className="w-[280px] rounded-2xl bg-popover p-1.5 card-shadow animate-fade-in"
+        >
           <div className="px-2 py-1.5 mb-1">
             <p className="text-xs font-semibold text-foreground">{t("mode.title")}</p>
             <p className="text-[10px] text-muted-foreground">{t("mode.description")}</p>
           </div>
-          <div role="tablist" aria-label="Learning modes">
+          <div role="tablist" aria-label={t("ui.learning_modes")}>
           {LEARNING_MODE_LIST.map((m) => {
             const Icon = MODE_ICONS[m.id];
+            const text = LEARNING_MODE_TRANSLATION_KEYS[m.id];
             const isActive = m.id === currentMode;
             const isConfirming = confirming === m.id;
             return (
@@ -133,7 +163,7 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium text-foreground">{t(`mode.${m.id}`)}</span>
+                    <span className="text-xs font-medium text-foreground">{t(text.label)}</span>
                     {isActive && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                         {t("mode.current")}
@@ -141,14 +171,15 @@ export function ModeSelector({ onModeChange }: ModeSelectorProps) {
                     )}
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">
-                    {isConfirming ? t("mode.confirmSwitch") : t(`mode.${m.id}.desc`)}
+                    {isConfirming ? t("mode.confirmSwitch") : t(text.description)}
                   </p>
                 </div>
               </button>
             );
           })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -162,7 +193,7 @@ export function ModeBadge({ mode }: { mode?: LearningMode }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${MODE_BG_COLORS[mode]} ${MODE_COLORS[mode]}`}>
       <Icon className="size-3" />
-      {t(`mode.badge.${mode}`)}
+      {t(LEARNING_MODE_TRANSLATION_KEYS[mode].badge)}
     </span>
   );
 }

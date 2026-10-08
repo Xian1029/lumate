@@ -8,6 +8,54 @@ Reference: textbook_quality project for content generation pipeline.
 """
 
 from services.llm.router import get_llm_client
+import re
+import unicodedata
+
+
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_MOJIBAKE_MARKERS = re.compile(r"(?:Ã.|Â.|â..|[\u00c2-\u00f4][\u0080-\u00bf])")
+
+
+def normalize_generated_markdown(value: str | None) -> str:
+    """Return safe, readable Markdown from any AI-note write/read path.
+
+    This is deliberately content-preserving: it repairs recognizable broken
+    UTF-8, strips invisible transport characters and normalizes newlines, but
+    never tries to rewrite a learner's mathematical or multilingual content.
+    """
+    cleaned = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _CONTROL_CHARACTERS.sub("", cleaned).replace("\ufffd", "")
+    # Remove invisible transport marks before attempting a byte-level repair:
+    # a BOM inserted mid-string otherwise makes the entire repair fail.
+    cleaned = "".join(
+        char for char in cleaned
+        # U+00AD may be a real byte in mojibake (for example the third byte
+        # of UTF-8 for a Chinese character), so preserve it until repair.
+        if unicodedata.category(char) != "Cf" or char in {"\n", "\t", "\u00ad"}
+    )
+    if _MOJIBAKE_MARKERS.search(cleaned):
+        # Handle both Latin-1 and Windows-1252 mojibake produced by copied or
+        # streamed UTF-8 content. If the conversion is not lossless, preserve
+        # the original text instead of damaging legitimate multilingual notes.
+        for encoding in ("latin-1", "cp1252"):
+            try:
+                repaired = cleaned.encode(encoding).decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            # Only accept a repair when it actually removes the recognizable
+            # broken-encoding marker.  This prevents a false positive from
+            # corrupting valid Chinese, formula, or Markdown text.
+            if _MOJIBAKE_MARKERS.search(repaired) is None:
+                cleaned = repaired
+            break
+    # Zero-width/BOM formatting controls are not visible to a student and can
+    # split Markdown tokens or Mermaid labels. Keep ordinary Unicode letters,
+    # maths symbols and punctuation intact.
+    cleaned = "".join(
+        char for char in cleaned
+        if unicodedata.category(char) != "Cf" or char in {"\n", "\t"}
+    )
+    return unicodedata.normalize("NFC", cleaned).strip()
 
 # Format-specific system prompts for note restructuring
 FORMAT_PROMPTS = {
@@ -35,6 +83,10 @@ mindmap
     Branch 2
       Sub-point
 ```
+Requirements:
+- Use the section title as the root topic
+- Include at least two meaningful branches and one supporting point per branch when the source permits
+- If the source is too short to form a useful map, use a concise bullet summary instead of an empty diagram
 Also include a brief text summary after the diagram.""",
 
     "step_by_step": """Restructure the following content as numbered steps or a process flow.
@@ -71,6 +123,35 @@ Mermaid rules:
 Always output valid Mermaid syntax wrapped in ```mermaid blocks.
 Always output valid KaTeX wrapped in $ or $$ delimiters."""
 
+CHILD_FRIENDLY_WRITING_PROMPT = """Write notes that a child can read independently.
+
+Use the same language as the source material. Make the explanation coherent, not
+a pile of extracted sentences. Follow this teaching order whenever the source
+contains enough information:
+1. Start with a one- or two-sentence "What are we learning?" overview.
+2. Explain the central idea in plain words before using specialist terms.
+3. Build the explanation in a small number of ordered sections. Each section
+   must naturally lead to the next with a short transition such as "Now that we
+   know..., let's see...".
+4. Define a new term the first time it appears, using a short child-friendly
+   explanation in parentheses or after a dash.
+5. Include one concrete, everyday example only when it is supported by the
+   source; label it clearly as an example.
+6. End with a short "Remember" recap of 3-5 points and, when appropriate, one
+   simple self-check question. Do not provide a misleading answer if the source
+   does not contain enough information.
+
+Quality rules:
+- Prefer short paragraphs, clear headings, and complete sentences over dense
+  fragments or long unconnected bullet lists.
+- Keep one idea per bullet. Explain cause-and-effect and sequence explicitly.
+- Do not use unexplained abbreviations, jargon, adult-only analogies, or a
+  patronizing tone.
+- Preserve facts, uncertainty, and terminology from the source. Never invent
+  facts, examples, dates, or conclusions to make the note sound smoother.
+- A diagram supports the explanation; it must never replace the written
+  explanation."""
+
 
 async def restructure_notes(
     content: str,
@@ -97,6 +178,8 @@ async def restructure_notes(
 
 {VISUAL_PROMPT if visual_preference == "auto" else ""}
 
+{CHILD_FRIENDLY_WRITING_PROMPT}
+
 Important:
 - Preserve all important information from the original
 - Use proper markdown formatting
@@ -108,7 +191,7 @@ Important:
 
     client = get_llm_client()
     result, _ = await client.chat(system_prompt, user_message)
-    return result
+    return normalize_generated_markdown(result)
 
 
 async def restructure_content_tree(

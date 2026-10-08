@@ -14,6 +14,12 @@ interface LearningOverviewCourseSummary {
 
 export interface CourseProgress {
   course_id: string;
+  /** One canonical completion definition shared by home, outline and graph. */
+  learning_progress: {
+    completed_learning_items: number;
+    total_learning_items: number;
+    progress_percent: number | null;
+  };
   total_nodes: number;
   mastered: number;
   reviewed: number;
@@ -69,6 +75,11 @@ export async function getGlobalTrends(days = 30): Promise<LearningTrends> {
 interface WeekStats {
   study_minutes: number;
   active_days: number;
+  daily_study: Array<{
+    date: string;
+    weekday: number;
+    study_minutes: number;
+  }>;
   quiz_total: number;
   quiz_correct: number;
   accuracy: number;
@@ -84,7 +95,8 @@ export interface WeeklyReport {
 }
 
 export async function getWeeklyReport(): Promise<WeeklyReport> {
-  return request("/progress/weekly-report");
+  const timezoneOffsetMinutes = -new Date().getTimezoneOffset();
+  return request(`/progress/weekly-report?timezone_offset_minutes=${timezoneOffsetMinutes}`);
 }
 
 // ── Memory Stats ──
@@ -144,6 +156,11 @@ export interface MisconceptionSample {
   correct_answer: string;
   error_category: string | null;
   diagnosis: string | null;
+  attempt_count?: number;
+  resolved_attempt_count?: number;
+  resolved?: boolean;
+  review_count?: number;
+  last_reviewed_at?: string | null;
 }
 
 export interface MisconceptionItem {
@@ -157,6 +174,8 @@ export interface MisconceptionItem {
   error_categories: Record<string, number>;
   priority_score: number;
   sample_questions: MisconceptionSample[];
+  status?: "active" | "resolved";
+  question_count?: number;
 }
 
 export interface MisconceptionDashboard {
@@ -187,6 +206,15 @@ export interface KnowledgeGraphNode {
   status: string;
   mastery: number;
   gap_type?: string | null;
+  /** Stable uploaded-material key supplied by the graph API. */
+  material_id?: string | null;
+  /** Human-readable source context for recommendations and relationship detail. */
+  material_title?: string | null;
+  chapter_title?: string | null;
+  content_node_id?: string | null;
+  /** Source-tree order supplied by the graph API; never inferred in the UI. */
+  material_order?: number;
+  curriculum_order?: number;
   x?: number;
   y?: number;
 }
@@ -214,9 +242,14 @@ export interface ReviewItem {
   concept_id: string;
   concept_label: string;
   mastery: number;
+  priority?: number;
   stability_days: number;
   retrievability: number;
   urgency: string;
+  reason?: string;
+  review_type?: "standard" | "contrast" | "prerequisite_first" | string;
+  related_concepts?: string[];
+  content_node_id?: string | null;
   cluster: string | null;
   last_reviewed: string | null;
 }
@@ -260,6 +293,7 @@ export {
   createStudyGoal,
   updateStudyGoal,
   getNextAction,
+  getNextLearningAction,
   listAgendaRuns,
   logAgentDecision,
   listTemplates,
@@ -276,7 +310,9 @@ export type {
   AgentTaskVerifierDiagnostics,
   AgentTaskStepResult,
   LearningTemplate,
+  TemplateApplyResult,
   NextActionResponse,
+  NextLearningAction,
   StudyGoal,
   CreateGoalRequest,
   UpdateGoalRequest,

@@ -1,5 +1,6 @@
 "use client";
 
+import { t } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { SendHorizontal, Square } from "lucide-react";
 
@@ -29,8 +30,8 @@ export function SendButton({
         className="mb-0.5 rounded-full"
         data-testid="chat-stop"
         onClick={onStop}
-        title="Stop generating"
-        aria-label="Stop generating"
+        title={t("ui.stop_generating")}
+        aria-label={t("ui.stop_generating")}
       >
         <Square className="size-3" />
       </Button>
@@ -47,8 +48,8 @@ export function SendButton({
       onClick={onSend}
       disabled={!canSend}
       aria-disabled={!canSend}
-      title="Send message"
-      aria-label="Send message"
+      title={t("ui.send_message")}
+      aria-label={t("ui.send_message")}
     >
       <SendHorizontal className="size-3.5" />
     </Button>

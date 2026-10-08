@@ -38,7 +38,7 @@ PATTERN_MODE_MAP: dict[str, str] = {
     "structured":     "course_following",
     "exploratory":    "self_paced",
     "exam_driven":    "exam_prep",
-    "review_focused": "maintenance",
+    "review_focused": "self_paced",
 }
 
 
@@ -71,10 +71,26 @@ def profile_to_layout(profile: LearnerProfile) -> dict:
         },
     ]
 
+    # Learning-style answers are also meaningful signals. Models do not always
+    # repeat the same signal in both the style field and boolean preferences.
+    implied_blocks: set[str] = set()
+    if profile.behavior.learning_style == "reading":
+        implied_blocks.add("notes")
+    elif profile.behavior.learning_style == "visual":
+        implied_blocks.update(("notes", "knowledge_graph"))
+    elif profile.behavior.learning_style == "kinesthetic":
+        implied_blocks.update(("quiz", "flashcards"))
+    if profile.behavior.study_pattern == "exam_driven":
+        implied_blocks.update(("quiz", "flashcards", "wrong_answers", "plan"))
+    elif profile.behavior.study_pattern == "review_focused":
+        implied_blocks.update(("review", "forecast", "flashcards"))
+    elif profile.behavior.study_pattern == "structured":
+        implied_blocks.add("plan")
+
     # Collect activated blocks sorted by priority
     activated: list[tuple[int, str, str, dict]] = []
     for field_path, block_type, size, config, priority in PROFILE_BLOCK_RULES:
-        if _resolve_field(profile, field_path):
+        if _resolve_field(profile, field_path) or block_type in implied_blocks:
             activated.append((priority, block_type, size, config))
     activated.sort(key=lambda x: x[0])
 

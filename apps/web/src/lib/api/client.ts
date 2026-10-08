@@ -4,6 +4,8 @@
  * Simple fetch-based client. Phase 1 may upgrade to tRPC or orpc.
  */
 
+import { t } from "@/lib/i18n";
+import { toUserFacingError } from "@/lib/display-mappers";
 import { toast } from "sonner";
 import { buildAuthHeaders } from "@/lib/auth";
 
@@ -15,15 +17,35 @@ export const API_BASE =
     ? "/api"
     : process.env.NEXT_PUBLIC_API_URL || "/api";
 
-/** Show a toast for API errors (non-chat requests). */
+/** A successful mutation may change home tasks, progress or resume context.
+ * Keeping this at the API boundary prevents every feature from inventing a
+ * different cache-invalidation list. */
+export const LEARNING_HOME_INVALIDATION_EVENT = "lumate:learning-state-changed";
+
+function notifyLearningStateMutation(method: string): void {
+  if (typeof window === "undefined" || method === "GET" || method === "HEAD") return;
+  window.dispatchEvent(new Event(LEARNING_HOME_INVALIDATION_EVENT));
+}
+
+/**
+ * Show a toast for API errors (non-chat requests).
+ *
+ * 后端 detail 常为英文技术文案，不应直接暴露给学生。这里统一转为中文友好
+ * 提示；真实技术错误仅在控制台日志保留，便于排查。
+ */
 function showApiErrorToast(err: ApiError): void {
   if (typeof window === "undefined") return;
-  const description = err.status === 429
-    ? "Rate limit reached. Please wait a moment."
-    : err.status === 503
-      ? "Service temporarily unavailable."
-      : err.detail || err.message;
-  toast.error("Request failed", { description, duration: 5000 });
+  // 保留技术细节到开发日志，不展示给用户。
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.error("[api]", err.status, err.code ?? "", err.detail ?? err.message);
+  }
+  const description = toUserFacingError(err.status, t("ui.request_failed"));
+  toast.error(t("ui.request_failed"), {
+    id: err.status === 429 ? "api-rate-limit" : undefined,
+    description,
+    duration: 5000,
+  });
 }
 
 export type JsonObject = Record<string, unknown>;
@@ -32,10 +54,12 @@ export type NullableDateTime = string | null;
 export class ApiError extends Error {
   status: number;
   code?: string;
+  /** 后端返回的原始 detail（可能为英文技术文案，仅用于日志）。 */
   detail?: string;
 
   constructor(message: string, options: { status: number; code?: string; detail?: string }) {
-    super(message);
+    // message 面向用户（中文），detail 保留原始技术信息。
+    super(toUserFacingError(options.status, message));
     this.name = "ApiError";
     this.status = options.status;
     this.code = options.code;
@@ -84,7 +108,10 @@ const RETRY_BASE_MS = 1500;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 function isRetryable(status: number): boolean {
-  return status >= 500 || status === 429;
+  // Retrying 429 responses multiplies a request burst and keeps the bucket
+  // exhausted. Surface one deduplicated message and let the caller retry
+  // after the server's Retry-After window instead.
+  return status >= 500;
 }
 
 function retryDelay(attempt: number): number {
@@ -167,15 +194,26 @@ function parseFilenameFromDisposition(contentDisposition: string | null): string
   return simpleMatch?.[1] ?? null;
 }
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export interface ApiRequestOptions extends RequestInit {
+  /** Use for page-entry reads where a missing local API must fail fast instead
+   * of leaving the screen in a misleading multi-retry loading state. */
+  retry?: boolean;
+  /** Background polling owns its inline error/recovery UI and must not create
+   * a toast on every interval. Interactive requests should keep the default. */
+  suppressErrorToast?: boolean;
+}
+
+export async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
+  const { retry = true, suppressErrorToast = false, ...requestOptions } = options ?? {};
   const fetchOptions = buildSecureRequestInit({
-    ...(options ?? {}),
+    ...requestOptions,
     includeJsonContentType: true,
   });
 
   let lastError: Error | undefined;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  const maxRetries = retry ? MAX_RETRIES : 0;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -187,26 +225,28 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 
       if (!res.ok) {
         const err = await parseApiError(res);
-        if (attempt < MAX_RETRIES && isRetryable(res.status)) {
+        if (attempt < maxRetries && isRetryable(res.status)) {
           lastError = err;
           await new Promise((r) => setTimeout(r, retryDelay(attempt)));
           continue;
         }
-        showApiErrorToast(err);
+        if (!suppressErrorToast) showApiErrorToast(err);
         throw err;
       }
 
       if (res.status === 204) {
+        notifyLearningStateMutation(fetchOptions.method || "GET");
         return undefined as T;
       }
 
       const text = await res.text();
+      notifyLearningStateMutation(fetchOptions.method || "GET");
       return text ? (JSON.parse(text) as T) : (undefined as T);
     } catch (err) {
       clearTimeout(timeoutId);
       // Abort errors are retryable (request timed out)
       if (err instanceof DOMException && err.name === "AbortError" && attempt < MAX_RETRIES) {
-        lastError = new TypeError("Request timed out");
+        lastError = new TypeError(t("ui.request_timeout"));
         await new Promise((r) => setTimeout(r, retryDelay(attempt)));
         continue;
       }
@@ -214,8 +254,8 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
       // Only retry genuine network errors, not JSON.parse or other TypeErrors.
       if (
         err instanceof TypeError &&
-        attempt < MAX_RETRIES &&
-        (err.message.includes("fetch") || err.message.includes("network") || err.message === "Failed to fetch" || err.message.includes("NetworkError"))
+        attempt < maxRetries &&
+        (err.message.includes("fetch") || err.message.includes("network") || err.message === t("ui.failed_to_fetch") || err.message.includes("NetworkError"))
       ) {
         lastError = err;
         await new Promise((r) => setTimeout(r, retryDelay(attempt)));
@@ -273,7 +313,7 @@ export async function requestBlob(path: string, options?: RequestInit): Promise<
     } catch (err) {
       clearTimeout(timeoutId);
       if (err instanceof DOMException && err.name === "AbortError" && attempt < MAX_RETRIES) {
-        lastError = new TypeError("Request timed out");
+        lastError = new TypeError(t("ui.request_timeout"));
         await new Promise((r) => setTimeout(r, retryDelay(attempt)));
         continue;
       }
