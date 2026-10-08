@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="https://img.icons8.com/3d-fluency/94/graduation-cap.png" alt="OpenTutor Logo" width="80" />
+<img src="https://img.icons8.com/3d-fluency/94/graduation-cap.png" alt="Lumate Logo" width="80" />
 
-# OpenTutor
+# Lumate
 
 **The first block-based adaptive learning workspace that runs locally.**
 
 Drop in a PDF. Get an AI tutor that actually adapts to how *you* learn.
 
-[![License](https://img.shields.io/github/license/zijinz456/OpenTutor?style=flat-square&labelColor=black)](LICENSE)
+[![License](https://img.shields.io/github/license/Xian1029/lumate?style=flat-square&labelColor=black)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=black)](https://www.python.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white&labelColor=black)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=black)](https://www.docker.com/)
@@ -19,9 +19,9 @@ Drop in a PDF. Get an AI tutor that actually adapts to how *you* learn.
 </div>
 
 <!-- TODO: Replace with demo GIF once recorded -->
-<!-- <p align="center"><img src="docs/assets/demo.gif" alt="OpenTutor demo — upload PDF, get adaptive workspace" width="800" /></p> -->
+<!-- <p align="center"><img src="docs/assets/demo.gif" alt="Lumate demo — upload PDF, get adaptive workspace" width="800" /></p> -->
 
-<p align="center"><img src="docs/assets/demo-workspace-full.png" alt="OpenTutor — block-based adaptive workspace with chapters, notes, quiz, knowledge graph, and progress tracking" width="800" /></p>
+<p align="center"><img src="docs/assets/demo-workspace-full.png" alt="Lumate — block-based adaptive workspace with chapters, notes, quiz, knowledge graph, and progress tracking" width="800" /></p>
 
 ## The Problem
 
@@ -29,7 +29,7 @@ Every AI learning tool we tried had the same issue: they treat every student the
 
 ## The Solution
 
-OpenTutor is a **self-hosted, local-first** AI learning platform. Upload your course material, and within 30 seconds you get structured notes, flashcards, quizzes, and an AI tutor — all running on your machine, completely free.
+Lumate is a **self-hosted, local-first** AI learning platform. Upload your course material, and within 30 seconds you get structured notes, flashcards, quizzes, and an AI tutor — all running on your machine, completely free.
 
 What makes it different:
 
@@ -46,7 +46,7 @@ Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repea
 ### 3 commands. That's it.
 
 ```bash
-git clone https://github.com/zijinz456/OpenTutor.git && cd OpenTutor
+git clone https://github.com/Xian1029/lumate.git && cd lumate
 cp .env.example .env
 docker compose up -d --build
 ```
@@ -57,8 +57,8 @@ Open [http://localhost:3001](http://localhost:3001). Done.
 
 ### One-Click Cloud Deploy
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zijinz456/OpenTutor)
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=opentutor&repo=https://github.com/zijinz456/OpenTutor)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Xian1029/lumate)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=lumate&repo=https://github.com/Xian1029/lumate)
 
 <details>
 <summary><strong>Manual setup (without Docker)</strong></summary>
@@ -192,7 +192,7 @@ See [.env.example](.env.example) for the full list.
 ## Architecture
 
 ```
-OpenTutor/
+Lumate/
 ├── apps/
 │   ├── api/              # FastAPI backend
 │   │   ├── services/
@@ -235,7 +235,7 @@ OpenTutor/
 
 ## Research
 
-OpenTutor builds on these papers:
+Lumate builds on these papers:
 
 | Paper | What We Use |
 |-------|-------------|
@@ -273,7 +273,7 @@ python -m pytest tests/ -q -k "not llm_router"
 npx playwright test
 ```
 
-Check out the [good first issues](https://github.com/zijinz456/OpenTutor/labels/good%20first%20issue) to get started, or read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+Check out the [good first issues](https://github.com/Xian1029/lumate/labels/good%20first%20issue) to get started, or read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ## License
 
@@ -283,8 +283,8 @@ Check out the [good first issues](https://github.com/zijinz456/OpenTutor/labels/
 
 <div align="center">
 
-**If OpenTutor helps your learning, consider giving it a star.**
+**If Lumate helps your learning, consider giving it a star.**
 
-[Report Bug](https://github.com/zijinz456/OpenTutor/issues/new?template=bug_report.md) · [Request Feature](https://github.com/zijinz456/OpenTutor/issues/new?template=feature_request.md) · [Join Discussion](https://github.com/zijinz456/OpenTutor/discussions)
+[Report Bug](https://github.com/Xian1029/lumate/issues/new?template=bug_report.md) · [Request Feature](https://github.com/Xian1029/lumate/issues/new?template=feature_request.md) · [Join Discussion](https://github.com/Xian1029/lumate/discussions)
 
 </div>
