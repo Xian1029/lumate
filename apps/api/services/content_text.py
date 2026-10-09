@@ -186,6 +186,26 @@ def clean_course_title(value: str | None, fallback: str = "Untitled") -> str:
     return title[:120] if title else fallback
 
 
+def normalize_textbook_outline_title(value: str | None) -> str:
+    """Collapse a language-book heading that accidentally contains prose.
+
+    Broken PDF text layers sometimes turn ``写作`` plus the first sentence
+    into one outline title (for example ``写作消息时，首先要……``).  Keep
+    ordinary mathematical and subject-specific titles untouched; only this
+    unmistakable writing-heading pattern is normalized.
+    """
+    title = clean_course_title(value)
+    if title.startswith("写作"):
+        detail = title[len("写作"):].strip()
+        if (
+            len(detail) > 24
+            or re.search(r"[，。！？；：]", detail)
+            or detail.startswith(("时", "消息时"))
+        ):
+            return "写作"
+    return title
+
+
 def normalize_pdf_markdown(value: str | None) -> str | None:
     """Make extractor Markdown structurally readable without rewriting facts.
 

@@ -30,6 +30,7 @@ from services.content_text import (
     clean_course_text,
     clean_course_title,
     normalize_pdf_markdown,
+    normalize_textbook_outline_title,
     split_embedded_heading_from_title,
 )
 
@@ -53,7 +54,7 @@ def _serialize_content_tree(nodes: list[CourseContentTree]) -> list[ContentNodeR
             id=node.id,
             # Defensive read-time cleanup protects courses imported before the
             # ingestion fix was introduced.
-            title=clean_course_title(node.title),
+            title=normalize_textbook_outline_title(node.title),
             content=clean_course_text(node.content),
             level=node.level,
             order_index=node.order_index,
@@ -390,6 +391,13 @@ async def repair_imported_text(course_id: uuid.UUID, user: User = Depends(get_cu
     for node in result.scalars():
         title, embedded_heading = split_embedded_heading_from_title(node.title)
         content = normalize_pdf_markdown(node.content)
+        display_title = normalize_textbook_outline_title(title)
+        if display_title != title:
+            # Preserve the extracted prose instead of silently dropping it
+            # when repairing an already-imported textbook.
+            suffix = title[len("写作"):].strip()
+            content = normalize_pdf_markdown(f"{suffix}\n\n{content or ''}")
+            title = display_title
         if embedded_heading:
             content = normalize_pdf_markdown(f"{embedded_heading}\n\n{content or ''}")
         changed = False
