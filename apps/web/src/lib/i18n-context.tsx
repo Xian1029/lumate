@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { type Locale, setLocale as setI18nLocale, initLocale, getLocale, t as rawT, tf as rawTF } from "./i18n";
+import { type Locale, setLocale as setI18nLocale, t as rawT, tf as rawTF } from "./i18n";
 
 interface I18nContextValue {
   locale: Locale;
@@ -16,16 +16,17 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>("zh");
 
   useEffect(() => {
-    initLocale();
-    const initialLocale = getLocale();
-    document.documentElement.lang = initialLocale;
-    setLocaleState(initialLocale);
+    // Only Chinese is exposed by the current product. Normalize preferences
+    // from older builds so all screens and API requests use one locale.
+    setI18nLocale("zh");
+    document.documentElement.lang = "zh-CN";
+    setLocaleState("zh");
   }, []);
 
-  const setLocale = useCallback((newLocale: Locale) => {
-    setI18nLocale(newLocale);
-    document.documentElement.lang = newLocale;
-    setLocaleState(newLocale);
+  const setLocale = useCallback((_newLocale: Locale) => {
+    setI18nLocale("zh");
+    document.documentElement.lang = "zh-CN";
+    setLocaleState("zh");
   }, []);
 
   const t = useCallback(

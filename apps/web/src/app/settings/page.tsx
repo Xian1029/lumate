@@ -17,8 +17,6 @@ import {
   OllamaSection,
   AppearanceSection,
   NotificationsSection,
-  UsageSection,
-  DataExportSection,
   TemplatesSection,
 } from "./sections";
 import { RuntimeAlert } from "@/components/shared/runtime-alert";
@@ -140,10 +138,6 @@ export default function SettingsPage() {
         <AppearanceSection />
 
         <NotificationsSection />
-
-        <UsageSection />
-
-        <DataExportSection />
 
         <TemplatesSection />
       </div>
