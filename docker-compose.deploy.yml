@@ -1,0 +1,116 @@
+name: lumate
+
+# Production-oriented deployment for a single host.
+# Keep docker-compose.yml for local development; this file has no source-code
+# bind mounts and persists application data in named volumes.
+services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: lumate-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - lumate_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      args:
+        PYTHON_REQUIREMENTS: ${API_PYTHON_REQUIREMENTS:-requirements-core.txt}
+    container_name: lumate-api
+    restart: unless-stopped
+    ports:
+      # The API is only needed by the web proxy; keep it off the public network.
+      - "127.0.0.1:${API_PORT:-8001}:8000"
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: sqlite+aiosqlite:////app/data/lumate.db
+      REDIS_URL: redis://redis:6379/0
+      AUTH_ENABLED: "true"
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in deploy/.env.production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in deploy/.env.production}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set in deploy/.env.production}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_REQUIRED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      CUSTOM_LLM_API_KEY: ${CUSTOM_LLM_API_KEY:-}
+      CUSTOM_LLM_BASE_URL: ${CUSTOM_LLM_BASE_URL:-}
+      CUSTOM_LLM_MODEL: ${CUSTOM_LLM_MODEL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      TEXTGENWEBUI_BASE_URL: ${TEXTGENWEBUI_BASE_URL:-http://host.docker.internal:5000/v1}
+      APP_AUTO_CREATE_TABLES: ${APP_AUTO_CREATE_TABLES:-true}
+      APP_AUTO_SEED_SYSTEM: ${APP_AUTO_SEED_SYSTEM:-true}
+      APP_RUN_SCHEDULER: ${APP_RUN_SCHEDULER:-true}
+      APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-true}
+      AMBIENT_MONITOR_ENABLED: ${AMBIENT_MONITOR_ENABLED:-true}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-500}
+      EMBEDDING_MODE: ${EMBEDDING_MODE:-auto}
+      CODE_SANDBOX_BACKEND: ${CODE_SANDBOX_BACKEND:-container}
+      CODE_SANDBOX_RUNTIME: ${CODE_SANDBOX_RUNTIME:-docker}
+      CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
+      ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
+    volumes:
+      - lumate_uploads:/app/uploads
+      - lumate_data:/app/data
+      # Required only when CODE_SANDBOX_BACKEND=container (the secure default).
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        # Browser requests stay same-origin and are proxied by Next.js.
+        NEXT_PUBLIC_API_URL: http://api:8000/api
+    container_name: lumate-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3003}:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  lumate_redis:
+  lumate_uploads:
+  lumate_data:
