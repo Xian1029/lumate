@@ -36,7 +36,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml up -d --build
 
 # 确认没有复用 OpenTutor 的容器
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml ps
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml ps
 docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|opentutor' || true
 ```
 
