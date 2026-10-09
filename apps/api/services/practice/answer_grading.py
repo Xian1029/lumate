@@ -255,7 +255,10 @@ def named_quantities_with_classification_equivalent(user_answer: str, correct_an
     """
     unit_pattern = "|".join(map(re.escape, _UNITS))
     quantity_pattern = re.compile(
-        rf"(?<![\w.])([+\-]?\s*(?:\d+(?:\.\d*)?|\.\d+))\s*({unit_pattern})",
+        # A sign commonly follows Chinese text directly ("增长-0.5kg").
+        # Only prevent embedded digits/decimals from being re-read; blocking
+        # after ``\w`` would drop the minus sign and mis-parse the value.
+        rf"(?<![\d.])([+\-]?\s*(?:\d+(?:\.\d*)?|\.\d+))\s*({unit_pattern})",
         re.IGNORECASE,
     )
     trailing_relation = re.compile(
@@ -266,6 +269,11 @@ def named_quantities_with_classification_equivalent(user_answer: str, correct_an
         result: dict[str, tuple[float, str]] = {}
         normalized = _normalize_math_text(value)
         for clause in re.split(r"[，,；;\n。]+", normalized):
+            # The final classification clause may itself contain quantities
+            # ("非负数为：1.2kg、0kg"). Those are evidence for the classifier,
+            # not another named person/object.
+            if "非负" in clause:
+                continue
             matches = list(quantity_pattern.finditer(clause))
             if len(matches) != 1:
                 continue
@@ -298,13 +306,28 @@ def named_quantities_with_classification_equivalent(user_answer: str, correct_an
     if "非负" not in _normalize_math_text(correct_answer) or "非负" not in _normalize_math_text(user_answer):
         return False
     expected_nonnegative = {label for label, (number, _) in correct_items.items() if number >= 0}
+    expected_nonnegative_values = {
+        (number, unit) for number, unit in correct_items.values() if number >= 0
+    }
     user_nonnegative: set[str] = set()
-    for sentence in re.split(r"[。.!！?？\n]+", _normalize_math_text(user_answer)):
+    user_nonnegative_values: set[tuple[float, str]] = set()
+    # Keep commas inside the classification clause because learners commonly
+    # write “非负数为：1.2kg、0kg”. Only sentence terminators/newlines split
+    # the scan; the quantity regex then extracts every listed value.
+    for sentence in re.split(r"(?:[。！？!?；;]+|\n+)", _normalize_math_text(user_answer)):
         if "非负" not in sentence:
             continue
-        prefix = sentence.split("非负", 1)[0]
-        user_nonnegative.update(label for label in user_items if label in prefix)
-    return bool(expected_nonnegative) and user_nonnegative == expected_nonnegative
+        # Accept both valid classroom forms:
+        #   “李明和刘伟是非负数” (labels before the classifier)
+        #   “非负数为：1.2kg、0kg” (values after the classifier)
+        before, after = sentence.split("非负", 1)
+        user_nonnegative.update(label for label in user_items if label in before)
+        for raw_number, raw_unit in quantity_pattern.findall(after):
+            unit = _UNIT_ALIASES.get(raw_unit.lower(), raw_unit.lower()).replace("％", "%")
+            user_nonnegative_values.add((float(raw_number.replace(" ", "")), unit))
+    labels_match = bool(expected_nonnegative) and user_nonnegative == expected_nonnegative
+    values_match = bool(expected_nonnegative_values) and user_nonnegative_values == expected_nonnegative_values
+    return labels_match or values_match
 
 
 def signed_opposite_relation_equivalent(user_answer: str, correct_answer: str) -> bool:

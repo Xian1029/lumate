@@ -31,6 +31,15 @@ def test_structured_word_problem_still_rejects_wrong_classification():
     ) is False
 
 
+def test_structured_word_problem_accepts_numeric_nonnegative_classification():
+    answer = "李明体重增长1.2kg\n张华体重增长-0.5kg\n刘伟体重增长0kg\n非负数为：1.2kg, 0kg"
+    assert grade_answer_deterministic(
+        question_type="free_response",
+        student_answer=answer,
+        expected_answer=REFERENCE,
+    ) is True
+
+
 def test_signed_opposite_explanation_accepts_equivalent_k12_wording():
     reference = "该温度表示为-3℃。零上温度为正，零下温度与它意义相反，两者是相反数。"
     answer = "-3℃。零上温度与零下温度表示相反的量。以0摄氏度为分界点，比0℃小的温度为零下温度，比0℃大的温度为零上温度。"
