@@ -40,6 +40,8 @@ docker compose --project-name lumate-customized --env-file deploy/.env.productio
 docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|opentutor' || true
 ```
 
+如果 API 日志出现 `sqlite3.OperationalError: unable to open database file`，请拉取包含数据卷权限修复的最新代码后，重新执行上面的 `up -d --build`。镜像会自动修复 Lumate 专用数据卷的权限；不要删除或重命名任何 `opentutor-*` 容器、网络或数据卷。
+
 `deploy/.env.production` 只存在于部署主机，不要提交到 Git。首次启动会创建数据库表和系统初始数据；之后可将 `APP_AUTO_CREATE_TABLES` 与 `APP_AUTO_SEED_SYSTEM` 改为 `false`，再执行 `docker compose ... up -d`。
 
 ## 验证与日常运维
