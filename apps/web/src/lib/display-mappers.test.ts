@@ -51,6 +51,11 @@ describe("display-mappers: 用户界面不得出现英文枚举", () => {
     expect(getGapTypeLabel("fundamental_gap")).toBe("基础薄弱");
     expect(getGapTypeLabel("trap_vulnerability")).toBe("易踩陷阱");
     expect(getGapTypeLabel("transfer_gap")).toBe("迁移困难");
+    expect(getGapTypeLabel("conceptual")).toBe("概念理解");
+    expect(getGapTypeLabel("procedural")).toBe("解题步骤");
+    expect(getGapTypeLabel("computational")).toBe("计算能力");
+    expect(getGapTypeLabel("reading")).toBe("审题理解");
+    expect(getGapTypeLabel("careless")).toBe("细心检查");
     expect(getGapTypeLabel("mastered")).toBe("已掌握");
     expect(getDiagnosisTypeLabel("carelessness")).toBe("粗心");
     expect(getErrorCategoryLabel("conceptual")).toBe("概念不清");

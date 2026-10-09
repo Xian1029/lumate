@@ -146,6 +146,12 @@ const GAP_TYPE_LABELS: Record<string, string> = {
   fundamental_gap: "基础薄弱",
   transfer_gap: "迁移困难",
   trap_vulnerability: "易踩陷阱",
+  conceptual: "概念理解",
+  procedural: "解题步骤",
+  computational: "计算能力",
+  reading: "审题理解",
+  careless: "细心检查",
+  other: "需要继续巩固",
   mastered: "已掌握",
 };
 

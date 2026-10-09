@@ -991,6 +991,7 @@
   "unit.errorPattern.empty": "暂未形成错因模式，完成更多练习后会自动聚类。",
   "unit.errorPattern.diagnosis": "高频诊断",
   "unit.errorPattern.category": "错误类别",
+  "unit.errorPattern.type": "错误类型",
   "unit.errorPattern.knowledgePoint": "知识点聚类",
   "unit.nextActions.title": "建议下一步",
   "unit.nextActions.desc": "一键把洞察转成行动。",

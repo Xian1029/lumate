@@ -991,6 +991,7 @@
   "unit.errorPattern.empty": "No error patterns yet. Solve more questions to reveal pattern clusters.",
   "unit.errorPattern.diagnosis": "Top Diagnoses",
   "unit.errorPattern.category": "Error Categories",
+  "unit.errorPattern.type": "Error type",
   "unit.errorPattern.knowledgePoint": "Knowledge Points",
   "unit.nextActions.title": "Recommended Next Actions",
   "unit.nextActions.desc": "Turn insights into action with one click.",
