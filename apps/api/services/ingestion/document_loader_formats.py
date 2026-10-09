@@ -158,8 +158,30 @@ def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
                 + ",".join(str(page) for page in unreadable_pages)
                 + f"|total={len(reader.pages)}]]"
             )
-        text = "\n".join(page_texts)
-        return Path(file_path).stem, normalize_pdf_markdown(text) or ""
+        text = normalize_pdf_markdown("\n".join(page_texts) or "") or ""
+
+        # Some textbook editions are distributed as image-only PDFs.  They
+        # have valid pages (and are perfectly viewable in the original-file
+        # viewer), but contain no text layer at all.  Returning an empty
+        # string makes the ingestion pipeline turn a usable source into a
+        # hard 500 failure.  Keep a deterministic, explicit placeholder node
+        # so the upload completes and the learner can open the original PDF;
+        # an OCR provider can replace this content later without changing the
+        # course-tree contract.  Text-bearing PDFs are completely unaffected.
+        if len(text.strip()) < 80 and len(reader.pages) > 0:
+            title = Path(file_path).stem
+            text = (
+                f"# {title}\n\n"
+                f"这是一份扫描版教材，共 {len(reader.pages)} 页。"
+                "当前文件没有可直接读取的文字层，已保留原文入口；"
+                "打开“查看课本原文”即可阅读全部页面。"
+            )
+            logger.warning(
+                "PDF %s has no readable text layer (%d pages); using original-view fallback",
+                Path(file_path).name,
+                len(reader.pages),
+            )
+        return Path(file_path).stem, text
     except ImportError:
         logger.debug("pypdf not installed, skipping PDF fallback")
     except (IOError, OSError) as e:
