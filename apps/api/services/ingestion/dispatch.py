@@ -157,11 +157,34 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             node.parent_id = None
             db.add(node)
         await db.flush()
+        # A large textbook can contain malformed/legacy references that are
+        # present in the parsed payload but were not actually persisted (for
+        # example when a duplicate id is discarded by the identity map).  Do
+        # not issue an FK update against a parent that is not in the database:
+        # one bad edge must never make the whole PDF upload fail.  Nodes whose
+        # parent is missing remain valid root nodes and are still searchable.
+        persisted_result = await db.execute(
+            select(CourseContentTree.id).where(
+                CourseContentTree.id.in_(node_ids)
+            )
+        )
+        persisted_ids = set(persisted_result.scalars().all())
+        missing_ids = node_ids - persisted_ids
+        if missing_ids:
+            logger.warning(
+                "Tree persistence skipped %d node ids for %s; preserving upload with safe roots",
+                len(missing_ids),
+                source_label,
+            )
         # Restore only parent references that point to a node in this upload;
         # malformed legacy references are safely treated as roots.
         for node in ordered_nodes:
             parent_id = original_parents.get(node.id)
-            parent_id = parent_id if parent_id in node_ids else None
+            parent_id = (
+                parent_id
+                if node.id in persisted_ids and parent_id in persisted_ids
+                else None
+            )
             if parent_id is not None:
                 # Use a Core UPDATE for the second phase. Mutating all ORM
                 # instances after the first flush can produce stale-row
