@@ -220,6 +220,7 @@ export function QuizView({
                   modeHint ?? useWorkspaceStore.getState().spaceLayout.mode ?? undefined,
                   difficultyHint,
                   true,
+                  { retry: false, suppressErrorToast: true },
                 );
                 const freshIds = new Set(response.problem_ids ?? []);
                 const updatedItems = (await listProblems(courseId, selectedNodeId)).filter(isUsableProblem);
@@ -569,7 +570,12 @@ export function QuizView({
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8" data-testid="quiz-panel" role="status" aria-live="polite">
-        <SkeletonCard className="w-full max-w-md" />
+        {generatingFresh ? (
+          <div className="w-full max-w-md rounded-xl border border-border/70 bg-card p-5 text-center">
+            <p className="text-sm font-medium">正在准备新一组练习题…</p>
+            <p className="mt-1 text-xs text-muted-foreground">上一组已完成，系统正在生成不重复的题目，请稍候。</p>
+          </div>
+        ) : <SkeletonCard className="w-full max-w-md" />}
       </div>
     );
   }

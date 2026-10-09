@@ -1,4 +1,4 @@
-import { request } from "./client";
+import { request, type ApiRequestOptions } from "./client";
 import { getLocale } from "@/lib/i18n";
 
 import type { GeneratedBatchSummaryBase, JsonObject, SavedGeneratedAsset } from "./client";
@@ -231,9 +231,11 @@ export async function extractQuiz(
   mode?: string,
   difficulty?: "easy" | "medium" | "hard",
   avoidExisting = false,
+  requestOptions?: Pick<ApiRequestOptions, "retry" | "suppressErrorToast">,
 ): Promise<ExtractQuizResult> {
   return request("/quiz/extract", {
     method: "POST",
+    ...requestOptions,
     body: JSON.stringify({
       course_id: courseId,
       content_node_id: contentNodeId,
