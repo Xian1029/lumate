@@ -74,3 +74,34 @@ def test_signed_opposite_explanation_rejects_wrong_requested_value():
         student_answer="3℃。零上温度与零下温度表示相反的量。",
         expected_answer="该温度表示为-3℃。零上温度为正，零下温度与它意义相反，两者是相反数。",
     ) is False
+
+
+def test_direction_correction_accepts_quoted_unsigned_mistake_and_signed_fix():
+    reference = "向右为正，向左走60m应记作-60m。"
+    answer = "向左走60m记作60m有错误，正确表示应该为：向左走60m记作-60m"
+    result = asyncio.run(grade_answer(
+        question_type="short_answer",
+        student_answer=answer,
+        expected_answer=reference,
+    ))
+    assert result.is_correct is True
+    assert result.match_type == MatchType.STRUCTURED_EQUIVALENT
+    assert grade_answer_deterministic(
+        question_type="short_answer",
+        student_answer=answer,
+        expected_answer=reference,
+    ) is True
+
+
+def test_direction_correction_does_not_accept_unsigned_or_wrong_sign_fix():
+    reference = "向右为正，向左走60m应记作-60m。"
+    assert grade_answer_deterministic(
+        question_type="short_answer",
+        student_answer="正确表示应该为：向左走60m记作60m",
+        expected_answer=reference,
+    ) is False
+    assert grade_answer_deterministic(
+        question_type="short_answer",
+        student_answer="正确表示应该为：向左走60m记作+60m",
+        expected_answer=reference,
+    ) is False

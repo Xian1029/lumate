@@ -226,6 +226,70 @@ _RELATION_LABELS = {
 _RELATION_NUMBER = r"[+-]?(?:\d+\s*/\s*\d+|\d+(?:\.\d+)?|\.\d+)"
 _RELATION_NUMBER_LIST = rf"{_RELATION_NUMBER}(?:\s*(?:、|,|，|和|及|与)\s*{_RELATION_NUMBER})*"
 
+# Travel-direction corrections are a common K12 free-response pattern: the
+# learner first quotes an incorrect unsigned value and then supplies the
+# corrected signed value.  Treating the whole prose as a bag of numbers makes
+# a correct answer look inconsistent, so it needs a deterministic parser.
+_TRAVEL_DIRECTION = re.compile(r"向\s*(左|右)(?:走|移动|方向)?|\b(left|right)\b", re.IGNORECASE)
+_CORRECTION_MARKER = re.compile(
+    r"(?:正确(?:的)?(?:表示|答案|写法)?|应该?|应当?|应(?:改为|写作|记作|为)|改为|改成|记作)"
+    r"\s*[:：]?",
+    re.IGNORECASE,
+)
+_SIGNED_DISTANCE = re.compile(
+    r"([+-]\s*(?:\d+(?:\.\d*)?|\.\d+))\s*(米|m|km|千米|厘米|cm|毫米|mm)\b",
+    re.IGNORECASE,
+)
+
+
+def _travel_direction(value: str) -> Optional[str]:
+    matches = list(_TRAVEL_DIRECTION.finditer(normalize_answer(value)))
+    if not matches:
+        return None
+    # Explanations often state the sign convention first ("向右为正") and
+    # the requested movement second. The last direction is the one attached
+    # to the answer being evaluated.
+    match = matches[-1]
+    side = (match.group(1) or match.group(2) or "").casefold()
+    return "left" if side in {"左", "left"} else "right"
+
+
+def _direction_correction_equivalent(student: str, expected: str) -> bool:
+    """Match an explicit correction of a signed travel distance.
+
+    Both answers must identify the same direction, the learner must use a
+    correction marker, and the final explicitly signed distance must equal the
+    reference. Unsigned numbers before the marker are the quoted mistake and
+    are deliberately ignored.
+    """
+    student_text = normalize_answer(student)
+    expected_text = normalize_answer(expected)
+    student_direction = _travel_direction(student_text)
+    expected_direction = _travel_direction(expected_text)
+    if not student_direction or student_direction != expected_direction:
+        return False
+    marker = _CORRECTION_MARKER.search(student_text)
+    if not marker:
+        return False
+    student_signed = list(_SIGNED_DISTANCE.finditer(student_text[marker.end():]))
+    expected_signed = list(_SIGNED_DISTANCE.finditer(expected_text))
+    if not student_signed or not expected_signed:
+        return False
+    student_match = student_signed[-1]
+    expected_match = expected_signed[-1]
+    try:
+        student_number = float(student_match.group(1).replace(" ", ""))
+        expected_number = float(expected_match.group(1).replace(" ", ""))
+    except ValueError:
+        return False
+    if not math.isclose(student_number, expected_number, rel_tol=_DEFAULT_REL_TOL, abs_tol=_DEFAULT_ABS_TOL):
+        return False
+    if student_direction == "left" and student_number >= 0:
+        return False
+    if student_direction == "right" and student_number <= 0:
+        return False
+    return True
+
 
 def _relation_bucket(label: str) -> Optional[str]:
     """Map a learner-facing position label to its mathematical bucket."""
@@ -613,6 +677,14 @@ async def grade_answer(
         return _single_result(False, MatchType.INCORRECT, normalize_answer(s_structured),
                               normalize_answer(e_structured), "缺少答案")
 
+    # A direction word problem may contain both the quoted mistake and the
+    # corrected signed value. Resolve that structure before generic numeric
+    # mismatch detection or semantic grading.
+    if _direction_correction_equivalent(s_structured, e_structured):
+        return _single_result(True, MatchType.STRUCTURED_EQUIVALENT,
+                              normalize_answer(s_structured), normalize_answer(e_structured),
+                              "方向与正负号修正一致")
+
     # Structured relation/classification precedes accepted and semantic text
     # matching.  Group order, member order and incidental wording are not part
     # of the answer; bucket membership is.
@@ -762,6 +834,8 @@ def grade_answer_deterministic(
 
     if not s_structured or not e_structured:
         return False
+    if _direction_correction_equivalent(s_structured, e_structured):
+        return True
     structured = _structured_relation_match(s_structured, e_structured)
     if structured is not None:
         return structured
