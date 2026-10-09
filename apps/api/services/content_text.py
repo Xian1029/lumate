@@ -18,6 +18,55 @@ _INVISIBLE_FORMATTING = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
 # browser and must not be stored as lesson text.
 _PRIVATE_USE_GLYPHS = re.compile(r"[\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]")
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
+_CJK_SPACE = re.compile(r"(?<=[\u3400-\u4dbf\u4e00-\u9fff])[ \t\u00a0\u2000-\u200b]+(?=[\u3400-\u4dbf\u4e00-\u9fff])")
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([，。！？；：、）》）】』】〉》])")
+_SPACE_AFTER_OPEN = re.compile(r"([（《【『〈“‘])\s+")
+
+
+def _strip_pdf_garbage_lines(value: str) -> str:
+    """Drop short mixed-script glyph runs emitted by broken PDF font maps.
+
+    A malformed embedded font can turn one decorative mark into characters
+    from several unrelated Unicode scripts (for example Gujarati + Georgian +
+    Lao). They are not readable source text. Real Chinese, Japanese, Russian,
+    English and mathematical text uses a consistent script and is preserved.
+    """
+    kept: list[str] = []
+    allowed_ranges = (
+        (0x2E80, 0x9FFF),  # CJK and CJK punctuation
+        (0x3040, 0x30FF),  # Japanese kana
+        (0xAC00, 0xD7AF),  # Hangul
+        (0x0400, 0x052F),  # Cyrillic
+        (0x0370, 0x03FF),  # Greek
+        (0x0000, 0x024F),  # Latin, digits and ASCII punctuation
+        (0x2000, 0x206F),  # spaces and general punctuation
+        (0x2100, 0x22FF),  # letterlike/math symbols
+    )
+
+    def is_allowed(char: str) -> bool:
+        codepoint = ord(char)
+        return any(start <= codepoint <= end for start, end in allowed_ranges)
+
+    for line in value.split("\n"):
+        compact = line.strip()
+        if compact and len(compact) <= 48:
+            letters = [char for char in compact if unicodedata.category(char).startswith("L")]
+            significant = [
+                char for char in compact
+                if unicodedata.category(char)[0] in {"L", "M", "N", "S"}
+            ]
+            if letters:
+                unusual = [char for char in significant if not is_allowed(char)]
+                scripts = {
+                    unicodedata.name(char, "UNKNOWN").split(" ")[0]
+                    for char in unusual
+                }
+                if len(unusual) >= 2 and len(unusual) * 2 >= len(significant) and len(scripts) >= 2:
+                    continue
+            if compact in {"®", "©", "™", "�"}:
+                continue
+        kept.append(line)
+    return "\n".join(kept)
 _INLINE_HEADING = re.compile(r"(?<!\n)[ \t]+(#{1,6})[ \t]+")
 _EMBEDDED_HEADING_IN_TITLE = re.compile(r"\s+(#{1,6})\s+(.+)")
 _NUMBER_GAP = re.compile(r"(?<=[0-9０-９])\s+(?=[0-9０-９])")
@@ -119,6 +168,13 @@ def clean_course_text(value: str | None) -> str | None:
     value = _INVISIBLE_FORMATTING.sub("", value)
     value = _PRIVATE_USE_GLYPHS.sub("", value)
     value = value.replace("\ufffd", "")
+    value = _strip_pdf_garbage_lines(value)
+    # CJK PDF text extractors frequently emit a word-space between every
+    # Chinese glyph. Those spaces are layout coordinates, not source text;
+    # remove them before headings and directory entries are detected.
+    value = _CJK_SPACE.sub("", value)
+    value = _SPACE_BEFORE_PUNCT.sub(r"\1", value)
+    value = _SPACE_AFTER_OPEN.sub(r"\1", value)
     value = _EXCESS_BLANK_LINES.sub("\n\n", value)
     return value.strip()
 

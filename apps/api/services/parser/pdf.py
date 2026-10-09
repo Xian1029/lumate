@@ -248,7 +248,7 @@ def _markdown_to_tree(
         nodes = _build_tree_from_paragraphs(
             markdown, course_id, source_file, semantic=not has_formal_contents,
         )
-        nodes = _restructure_textbook_nodes(nodes, course_id, source_file)
+        nodes = _restructure_textbook_nodes(nodes, course_id, source_file, markdown)
         return _thin_tree(nodes)
 
     # Step 2: Single-pass tree build from headings (code-block aware)
@@ -342,13 +342,20 @@ def _markdown_to_tree(
     # Recover semantic textbook boundaries before thinning: the thinning pass
     # intentionally discards child titles when merging, but those titles are
     # exactly the 1.1/1.2 boundaries needed for a clean K-12 outline.
-    nodes = _restructure_textbook_nodes(nodes, course_id, source_file)
+    nodes = _restructure_textbook_nodes(nodes, course_id, source_file, markdown)
     nodes = _thin_tree(nodes)
 
     return nodes
 
 
 _CHAPTER_LINE = re.compile(r"^(第[一二三四五六七八九十百０-９\d]+章)\s*[：:·]?\s*(.{1,40})$")
+_UNIT_LINE = re.compile(r"^(第[一二三四五六七八九十百０-９\d]+单元)\s*(.*)$")
+_LESSON_LINE = re.compile(
+    r"^(?P<number>[０-９\d]{1,2})\s*\*?\s+(?P<title>[\u4e00-\u9fff《“‘A-Za-z].{0,78})$"
+)
+_TEXTBOOK_SECTION_LINE = re.compile(
+    r"^(写作|综合性学习|名著导读|课外古诗词诵读|口语交际|语文园地|活动探究)\s*(.*)$"
+)
 # Some publisher PDFs put an individual text span around every glyph, so
 # ``26.1`` arrives as ``２６ ． １``. Permit whitespace *inside* each part of
 # a section number without relaxing the title matching for ordinary prose.
@@ -416,20 +423,141 @@ def _find_textbook_body_start(lines: list[str]) -> tuple[int | None, int | None]
     if toc_index is None:
         return None, None
 
-    seen_chapters: set[str] = set()
+    seen_structures: set[tuple[str, str]] = set()
     for index in range(toc_index + 1, len(lines)):
         match = _CHAPTER_LINE.match(lines[index])
-        if not match:
-            continue
-        key = _chapter_number_key(match.group(1)[1:-1])
-        if key in seen_chapters:
+        if match:
+            key = ("chapter", _chapter_number_key(match.group(1)[1:-1]))
+        else:
+            unit_match = _UNIT_LINE.match(lines[index])
+            if not unit_match:
+                continue
+            key = ("unit", _chapter_number_key(unit_match.group(1)[1:-2]))
+        if key in seen_structures:
             return toc_index, index
-        seen_chapters.add(key)
+        seen_structures.add(key)
     return toc_index, None
+
+
+def _restructure_unit_textbook_nodes(
+    lines: list[str], body_start: int, course_id: uuid.UUID, source_file: str,
+) -> list[CourseContentTree]:
+    """Build a readable unit/lesson tree for language and humanities books.
+
+    Chinese-language textbooks use ``第一单元`` and numbered reading lessons,
+    not ``第一章``/``1.1`` headings. Their PDF text layer also repeats page
+    headers, so treating every page as a chapter produces a noisy outline.
+    This parser keeps the publisher's unit and lesson order while merging page
+    continuations into the canonical lesson node.
+    """
+    root = CourseContentTree(
+        id=uuid.uuid4(), course_id=course_id, parent_id=None, title=source_file,
+        level=0, order_index=0, source_file=source_file, source_type="pdf",
+    )
+    rebuilt = [root]
+    front_text = "\n".join(lines[:body_start]).strip()
+    if front_text:
+        rebuilt.append(CourseContentTree(
+            id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
+            title="前言与目录", level=1, order_index=1, content=front_text,
+            source_file=source_file, source_type="pdf", content_category="reference",
+        ))
+
+    unit: CourseContentTree | None = None
+    unit_key: str | None = None
+    section: CourseContentTree | None = None
+    unit_order = 1 if front_text else 0
+    section_order = 0
+    seen_lessons: dict[tuple[str, str], CourseContentTree] = {}
+    seen_sections: dict[tuple[str, str], CourseContentTree] = {}
+
+    def append_content(target: CourseContentTree | None, text: str) -> None:
+        if target is None or not text:
+            return
+        target.content = clean_course_text(f"{target.content or ''}\n{text}")
+
+    for raw_line in lines[body_start:]:
+        line = re.sub(r"^(?:/[A-Za-z0-9]+)+", "", raw_line).strip()
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line or re.fullmatch(r"(?:[IVX]+|\d{1,3})", line):
+            continue
+
+        unit_match = _UNIT_LINE.match(line)
+        if unit_match:
+            next_unit_key = _chapter_number_key(unit_match.group(1)[1:-2])
+            if unit is not None and unit_key == next_unit_key:
+                # Repeated page header; do not create a duplicate unit.
+                section = None
+                continue
+            unit_order += 1
+            unit = CourseContentTree(
+                id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
+                title=unit_match.group(1), level=1, order_index=unit_order,
+                source_file=source_file, source_type="pdf",
+            )
+            unit_key = next_unit_key
+            rebuilt.append(unit)
+            section = None
+            section_order = 0
+            continue
+
+        if unit is None:
+            continue
+
+        category_match = _TEXTBOOK_SECTION_LINE.match(line)
+        if category_match:
+            category = category_match.group(1)
+            detail = category_match.group(2).strip()
+            if detail.startswith("第") and "单元" in detail[:8]:
+                append_content(unit, line)
+                continue
+            title = f"{category} {detail}".strip()
+            key = (str(unit.id), title)
+            section = seen_sections.get(key)
+            if section is None:
+                section_order += 1
+                section = CourseContentTree(
+                    id=uuid.uuid4(), course_id=course_id, parent_id=unit.id,
+                    title=clean_course_title(title), level=2, order_index=section_order,
+                    source_file=source_file, source_type="pdf",
+                )
+                seen_sections[key] = section
+                rebuilt.append(section)
+            continue
+
+        lesson_match = _LESSON_LINE.match(line)
+        if lesson_match:
+            number = _normalize_outline_number(lesson_match.group("number"))
+            title = clean_course_title(lesson_match.group("title"))
+            # Page headers repeat the lesson title. A genuine lesson heading is
+            # short and has no sentence-ending punctuation.
+            if len(title) <= 80 and not re.search(r"[。！？!?；;]$", title):
+                key = (str(unit.id), number)
+                lesson = seen_lessons.get(key)
+                if lesson is None:
+                    section_order += 1
+                    lesson = CourseContentTree(
+                        id=uuid.uuid4(), course_id=course_id, parent_id=unit.id,
+                        title=f"{number} {title}", level=2, order_index=section_order,
+                        source_file=source_file, source_type="pdf",
+                    )
+                    seen_lessons[key] = lesson
+                    rebuilt.append(lesson)
+                section = lesson
+                continue
+
+        append_content(section or unit, line)
+
+    # Only use this specialized parser when it found real unit/lesson nodes;
+    # otherwise retain the generic parser's safer output for unrelated files.
+    if len(rebuilt) <= 2 or not any(node.level == 2 for node in rebuilt):
+        return []
+    return rebuilt
 
 
 def _restructure_textbook_nodes(
     nodes: list[CourseContentTree], course_id: uuid.UUID, source_file: str,
+    markdown: str | None = None,
 ) -> list[CourseContentTree]:
     """Turn page-shaped PDF output into front matter → chapter → section.
 
@@ -438,7 +566,7 @@ def _restructure_textbook_nodes(
     pass recognizes semantic chapter/section lines and merges continuation
     pages into the current section.
     """
-    if len(nodes) < 3:
+    if len(nodes) < 3 and not markdown:
         return nodes
     chunks = [
         clean_course_text(f"{node.title}\n{node.content or ''}") or ""
@@ -450,11 +578,24 @@ def _restructure_textbook_nodes(
     def chapter_line(line: str):
         return None if _SECTION_TOKEN.search(line) else _CHAPTER_LINE.match(line)
 
-    lines = [
-        re.sub(r"\s+", " ", raw_line).strip(" #\t")
-        for chunk in chunks for raw_line in chunk.splitlines()
-    ]
+    if markdown:
+        # Keep the extractor's original line boundaries. Page-shaped node
+        # titles often prepend a page number and running header, which would
+        # otherwise turn ``1 春`` into the false title ``3 阅读 1 春``.
+        lines = [
+            re.sub(r"\s+", " ", raw_line).strip(" #\t")
+            for raw_line in (normalize_pdf_markdown(markdown) or "").splitlines()
+        ]
+    else:
+        lines = [
+            re.sub(r"\s+", " ", raw_line).strip(" #\t")
+            for chunk in chunks for raw_line in chunk.splitlines()
+        ]
     toc_index, body_start = _find_textbook_body_start(lines)
+    if body_start is not None and any(_UNIT_LINE.match(line) for line in lines[body_start:]):
+        unit_nodes = _restructure_unit_textbook_nodes(lines, body_start, course_id, source_file)
+        if unit_nodes:
+            return unit_nodes
     if body_start is None:
         body_start = next(
             (index for index, line in enumerate(lines) if chapter_line(line)),
@@ -746,8 +887,16 @@ def _thin_tree(nodes: list[CourseContentTree]) -> list[CourseContentTree]:
             re.match(r"^[０-９\d]+\s*[．.]\s*[０-９\d]+(?:\s|$)", nodes[ci].title or "")
             for ci in children_indices
         )
+        preserve_outline_children = nodes[i].level <= 1 and any(
+            (nodes[ci].level or 0) > (nodes[i].level or 0) for ci in children_indices
+        )
 
-        if token_counts[i] < MIN_NODE_TOKENS and children_indices and not has_numbered_section_children:
+        if (
+            token_counts[i] < MIN_NODE_TOKENS
+            and children_indices
+            and not has_numbered_section_children
+            and not preserve_outline_children
+        ):
             # Merge children content into this node
             merged_parts = []
             if nodes[i].content:
