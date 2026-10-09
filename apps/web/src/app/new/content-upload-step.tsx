@@ -1,34 +1,19 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { GraduationCap, Compass, Clock } from "lucide-react";
 import type { Mode, FileItem } from "./types";
 import type { UploadPlan } from "@/lib/api";
-import type { LearningMode } from "@/lib/block-system/types";
-import { LEARNING_MODE_TRANSLATION_KEYS } from "@/lib/block-system/templates";
 import { formatSize } from "./types";
 import { StepIndicator } from "./step-indicator";
-import { UrlSection, AutoScrapeSection } from "./url-section";
 
 interface ContentUploadStepProps {
   mode: Mode;
-  learningMode: LearningMode;
-  onLearningModeChange: (mode: LearningMode) => void;
   projectName: string;
   onProjectNameChange: (value: string) => void;
   nameError: string | null;
   onValidateName: (value: string) => void;
   files: FileItem[];
   onFilesChange: (files: FileItem[]) => void;
-  url: string;
-  onUrlChange: (value: string) => void;
-  urlError: string | null;
-  onValidateUrl: (value: string) => void;
-  autoScrape: boolean;
-  onAutoScrapeChange: (value: boolean) => void;
-  isCanvasDetected: boolean;
-  canvasSessionValid: boolean;
-  onAddUrl: () => void;
   onBack: () => void;
   onStartParsing: () => void;
   uploadPlan?: UploadPlan | null;
@@ -41,23 +26,12 @@ interface ContentUploadStepProps {
 
 export function ContentUploadStep({
   mode,
-  learningMode,
-  onLearningModeChange,
   projectName,
   onProjectNameChange,
   nameError,
   onValidateName,
   files,
   onFilesChange,
-  url,
-  onUrlChange,
-  urlError,
-  onValidateUrl,
-  autoScrape,
-  onAutoScrapeChange,
-  isCanvasDetected,
-  canvasSessionValid,
-  onAddUrl,
   onBack,
   onStartParsing,
   uploadPlan,
@@ -69,8 +43,8 @@ export function ContentUploadStep({
 }: ContentUploadStepProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const hasUploadErrors = nameError !== null;
 
-  const hasUploadErrors = nameError !== null || urlError !== null;
 
   function handleFileAdd(e: React.ChangeEvent<HTMLInputElement>): void {
     const selected = e.target.files;
@@ -117,7 +91,7 @@ export function ContentUploadStep({
   function getModeLabel(): string {
     if (mode === "upload") return t("new.mode.upload");
     if (mode === "url") return t("new.mode.url");
-    return `${t("new.mode.upload")} + ${t("new.addUrl")}`;
+    return t("new.mode.upload");
   }
 
   return (
@@ -160,45 +134,8 @@ export function ContentUploadStep({
         {nameError && <p className="text-xs text-destructive mt-1">{nameError}</p>}
       </div>
 
-      {/* Learning Mode */}
-      <div className="flex flex-col gap-2">
-        <label className="font-semibold text-sm text-foreground">
-          {t("mode.title") !== "mode.title" ? t("mode.title") : t("ui.learning_mode")}
-        </label>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {(
-            [
-              { id: "course_following", icon: GraduationCap },
-              { id: "self_paced", icon: Compass },
-              { id: "exam_prep", icon: Clock },
-            ] as const
-          ).map((item) => {
-            const Icon = item.icon;
-            const active = learningMode === item.id;
-            const text = LEARNING_MODE_TRANSLATION_KEYS[item.id];
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onLearningModeChange(item.id)}
-                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
-                  active
-                    ? "border-brand bg-brand-muted/30 text-foreground"
-                    : "border-border bg-card hover:border-brand/40"
-                }`}
-              >
-                <Icon className={`size-3.5 ${active ? "text-brand" : "text-muted-foreground"}`} />
-                <span className="text-xs font-medium">
-                  {t(text.label)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Upload Section */}
-      {(mode === "upload" || mode === "both") && (
+      {mode === "upload" && (
         <UploadSection
           files={files}
           dragging={dragging}
@@ -208,29 +145,6 @@ export function ContentUploadStep({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          t={t}
-        />
-      )}
-
-      {/* URL Section */}
-      {(mode === "url" || mode === "both") && (
-        <UrlSection
-          url={url}
-          onUrlChange={onUrlChange}
-          urlError={urlError}
-          onValidateUrl={onValidateUrl}
-          isCanvasDetected={isCanvasDetected}
-          canvasSessionValid={canvasSessionValid}
-          onAddUrl={onAddUrl}
-          t={t}
-        />
-      )}
-
-      {/* Auto-Scrape Settings */}
-      {(mode === "url" || mode === "both") && (
-        <AutoScrapeSection
-          autoScrape={autoScrape}
-          onAutoScrapeChange={onAutoScrapeChange}
           t={t}
         />
       )}

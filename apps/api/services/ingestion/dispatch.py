@@ -9,6 +9,7 @@ import logging
 import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from models.ingestion import IngestionJob, Assignment
 
@@ -130,15 +131,48 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
             )
         outline_report = (job.page_stats or {}).get("outline_integrity", {})
         structure_source = "SOURCE_TOC" if outline_report.get("checked") else "GENERATED_FROM_CONTENT"
-        for node in nodes:
-            # Normalize source metadata to the ingestion source (file/url).
+        # SQLite otherwise checks self-referential FKs at each statement,
+        # while PostgreSQL handles this through its normal transaction rules.
+        # Deferring the local constraint lets the complete tree and its
+        # catalog mirror be written in one consistent transaction.
+        if db.bind is not None and db.bind.dialect.name == "sqlite":
+            await db.execute(sa.text("PRAGMA defer_foreign_keys = ON"))
+        # SQLite enforces the self-referential parent FK immediately. Flush
+        # each tree level before inserting its children instead of relying on
+        # SQLAlchemy's batch ordering, which can vary for large textbook
+        # uploads and otherwise leaves valid chapters looking like a failed
+        # PDF parse.
+        ordered_nodes = sorted(nodes, key=lambda item: (item.level, item.order_index))
+        node_ids = {node.id for node in ordered_nodes}
+        original_parents = {node.id: node.parent_id for node in ordered_nodes}
+        # Insert the complete node set without parent references first. This
+        # avoids SQLite's immediate self-FK check even when SQLAlchemy groups
+        # a large textbook into an INSERT batch in an unexpected order.
+        for node in ordered_nodes:
             node.source_type = job.source_type
             node.source_file = source_label
             node.content_category = node.content_category or category
             if node.parent_id is None:
                 node.metadata_ = {**(node.metadata_ or {}), "structureSource": structure_source}
+            node.parent_id = None
             db.add(node)
-        await db.flush()  # Assign IDs before indexing
+        await db.flush()
+        # Restore only parent references that point to a node in this upload;
+        # malformed legacy references are safely treated as roots.
+        for node in ordered_nodes:
+            parent_id = original_parents.get(node.id)
+            parent_id = parent_id if parent_id in node_ids else None
+            if parent_id is not None:
+                # Use a Core UPDATE for the second phase. Mutating all ORM
+                # instances after the first flush can produce stale-row
+                # updates under SQLite's async driver when a large batch is
+                # still being reconciled by the identity map.
+                await db.execute(
+                    sa.update(CourseContentTree)
+                    .where(CourseContentTree.id == node.id)
+                    .values(parent_id=parent_id)
+                )
+            set_committed_value(node, "parent_id", parent_id)
 
         # Preserve the existing course tree as the learning-space source of
         # truth, then mirror it into the textbook-first catalog for question

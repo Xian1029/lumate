@@ -111,29 +111,45 @@ async def ensure_textbook_catalog(
         )
     )
     chapters_by_node = {row.content_node_id: row for row in existing_result.scalars() if row.content_node_id}
+    # The catalog is an auxiliary index. A legacy/imported session may have
+    # a tree object that was detached by a retry between flushes; never let
+    # that optional index turn a valid parsed upload into a 503.
+    persisted_result = await db.execute(
+        select(CourseContentTree.id).where(
+            CourseContentTree.id.in_([node.id for node in node_list])
+        )
+    )
+    persisted_node_ids = set(persisted_result.scalars().all())
 
     # Parent nodes always precede descendants in the parsed content tree. The
     # fallback sort also makes this safe for imported/legacy trees.
-    for node in sorted(node_list, key=lambda item: (item.level, item.order_index)):
-        if node.id in chapters_by_node:
-            continue
-        source_file = str(node.source_file or "").strip()
-        textbook = textbooks.get(source_file)
-        if textbook is None:
-            continue
-        parent = chapters_by_node.get(node.parent_id)
-        chapter = CurriculumChapter(
-            textbook_id=textbook.id,
-            parent_id=parent.id if parent and parent.textbook_id == textbook.id else None,
-            content_node_id=node.id,
-            code=f"node-{node.id}",
-            title=node.title,
-            level=node.level,
-            sort_order=node.order_index,
-        )
-        db.add(chapter)
-        chapters_by_node[node.id] = chapter
-    await db.flush()
+    ordered_nodes = sorted(node_list, key=lambda item: (item.level, item.order_index))
+    # SQLite enforces the self-referential chapter FK immediately. Persist
+    # each level before creating its children so large textbook imports cannot
+    # fail after the content tree itself has already been parsed correctly.
+    for level in sorted({node.level for node in ordered_nodes}):
+        for node in (item for item in ordered_nodes if item.level == level):
+            if node.id in chapters_by_node:
+                continue
+            if node.id not in persisted_node_ids:
+                continue
+            source_file = str(node.source_file or "").strip()
+            textbook = textbooks.get(source_file)
+            if textbook is None:
+                continue
+            parent = chapters_by_node.get(node.parent_id)
+            chapter = CurriculumChapter(
+                textbook_id=textbook.id,
+                parent_id=parent.id if parent and parent.textbook_id == textbook.id else None,
+                content_node_id=node.id,
+                code=f"node-{node.id}",
+                title=node.title,
+                level=node.level,
+                sort_order=node.order_index,
+            )
+            db.add(chapter)
+            chapters_by_node[node.id] = chapter
+        await db.flush()
     return chapters_by_node
 
 

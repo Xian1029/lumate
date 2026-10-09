@@ -3,7 +3,6 @@
 import { useNewProject } from "./use-new-project";
 import { ContentUploadStep } from "./content-upload-step";
 import { ParsingProgressStep } from "./parsing-progress-step";
-import { CanvasLoginModal } from "./canvas-login-modal";
 
 /**
  * Simplified "add another course" page for returning users.
@@ -16,24 +15,13 @@ export default function NewProjectPage() {
     <div className="min-h-screen bg-background">
       {(p.step === "mode" || p.step === "upload") && (
         <ContentUploadStep
-          mode="both"
-          learningMode={p.learningMode}
-          onLearningModeChange={p.setLearningMode}
+          mode="upload"
           projectName={p.projectName}
           onProjectNameChange={p.setProjectName}
           nameError={p.nameError}
           onValidateName={p.validateName}
           files={p.files}
           onFilesChange={p.setFiles}
-          url={p.url}
-          onUrlChange={p.setUrl}
-          urlError={p.urlError}
-          onValidateUrl={p.validateUrl}
-          autoScrape={p.autoScrape}
-          onAutoScrapeChange={p.setAutoScrape}
-          isCanvasDetected={p.isCanvasDetected}
-          canvasSessionValid={p.canvasSessionValid}
-          onAddUrl={p.handleAddUrl}
           onBack={() => p.router.push("/")}
           onStartParsing={p.startParsing}
           uploadPlan={p.uploadPlan}
@@ -69,16 +57,6 @@ export default function NewProjectPage() {
         />
       )}
 
-      {p.showCanvasLogin && (
-        <CanvasLoginModal
-          url={p.url}
-          canvasLogging={p.canvasLogging}
-          canvasLoginError={p.canvasLoginError}
-          onClose={() => p.setShowCanvasLogin(false)}
-          onRetry={p.handleAddUrl}
-          t={p.t}
-        />
-      )}
     </div>
   );
 }

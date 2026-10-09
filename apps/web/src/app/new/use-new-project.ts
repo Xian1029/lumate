@@ -35,14 +35,17 @@ export function useNewProject() {
 
   /* ---------- State ---------- */
   const [step, setStep] = useState<Step>("mode");
-  const [mode, setMode] = useState<Mode>("both");
+  // New learning spaces accept uploaded materials only. URL ingestion and
+  // periodic scraping are intentionally disabled at the source, not merely
+  // hidden from the form.
+  const [mode] = useState<Mode>("upload");
   const [learningMode, setLearningMode] = useState<LearningMode>("course_following");
   const [projectName, setProjectName] = useState("");
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
   const [files, setFiles] = useState<FileItem[]>([]);
   const [url, setUrl] = useState("");
-  const [autoScrape, setAutoScrape] = useState(true);
+  const [autoScrape] = useState(false);
   const [features, setFeatures] = useState<Record<string, boolean>>({
     notes: true, practice: true, study_plan: true, free_qa: true, wrong_answer: true,
   });
@@ -299,7 +302,7 @@ export function useNewProject() {
 
     try {
       const baseMetadata = {
-        ...buildMetadata(features, autoScrape, url, mode),
+        ...buildMetadata(features, false, "", "upload"),
         learning_mode: learningMode,
       };
 
@@ -317,7 +320,7 @@ export function useNewProject() {
         nextCourseIds.push(course.id);
         setCreatedCourseId(course.id);
         addLog(`${new Date().toLocaleTimeString()}  已按你的选择将全部资料放入同一学习空间`, "text-success");
-        await submitSources({ course, files, url, mode, autoScrape, canvasSessionValid, projectName: projectName || "综合学习空间", addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
+        await submitSources({ course, files, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName: projectName || "综合学习空间", addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
         setCreatedCourseIds(nextCourseIds);
         return;
       }
@@ -354,7 +357,7 @@ export function useNewProject() {
           }
           addLog(`${new Date().toLocaleTimeString()}  ${t("new.logProjectCreated")}`, "text-success");
           await submitSources({
-            course, files: groupFiles, url: "", mode: "upload", autoScrape, canvasSessionValid, projectName: group.suggested_name,
+            course, files: groupFiles, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName: group.suggested_name,
             addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging,
             setCanvasLoginError, setNoSourcesSubmitted, t,
           });
@@ -363,7 +366,7 @@ export function useNewProject() {
           const course = await addCourse("待确认资料", undefined, baseMetadata, "SETUP");
           nextCourseIds.push(course.id);
           setCreatedCourseIds([...nextCourseIds]);
-          await submitSources({ course, files: separateFiles, url: "", mode: "upload", autoScrape, canvasSessionValid, projectName: "待确认资料", addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
+          await submitSources({ course, files: separateFiles, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName: "待确认资料", addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
         }
       } else {
         // Single group (or no plan): keep the original single-space flow,
@@ -387,7 +390,7 @@ export function useNewProject() {
         addLog(`${new Date().toLocaleTimeString()}  ${t("new.logProjectCreated")}`, "text-success");
 
         await submitSources({
-          course, files, url, mode, autoScrape, canvasSessionValid, projectName,
+          course, files, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName,
           addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging,
           setCanvasLoginError, setNoSourcesSubmitted, t,
         });
@@ -422,7 +425,7 @@ export function useNewProject() {
     const ids = createdCourseIds.length ? createdCourseIds : [createdCourseId!];
     const layout = buildLayoutFromMode(learningMode);
     await Promise.all(ids.map(async (id) => {
-      const metadata = { ...buildMetadata(features, autoScrape, url, mode), learning_mode: learningMode, spaceLayout: layout };
+      const metadata = { ...buildMetadata(features, false, "", "upload"), learning_mode: learningMode, spaceLayout: layout };
       await updateCourse(id, { metadata });
       await activateCourse(id);
       provisionalCourseIdsRef.current = provisionalCourseIdsRef.current.filter((value) => value !== id);
@@ -437,7 +440,7 @@ export function useNewProject() {
     if (!courseId) return;
     const layout = buildLayoutFromMode(learningMode);
     const metadata = {
-      ...buildMetadata(features, autoScrape, url, mode),
+      ...buildMetadata(features, false, "", "upload"),
       learning_mode: learningMode,
       spaceLayout: layout,
     };
@@ -455,12 +458,12 @@ export function useNewProject() {
 
   return {
     router, t, step, setStep,
-    mode, setMode,
+    mode,
     learningMode, setLearningMode,
     projectName, setProjectName, nameError, validateName,
     files, setFiles,
     url, setUrl, urlError, validateUrl, isCanvasDetected, canvasSessionValid, handleAddUrl,
-    autoScrape, setAutoScrape,
+    autoScrape,
     features, toggleFeature, nlInput, setNlInput,
     showCanvasLogin, setShowCanvasLogin, canvasLogging, canvasLoginError,
     parseSteps, parseProgress, parseLogs, ingestionJobs, canContinueToFeatures, allJobsFailed, hasFailedJob, processingState, readyCourseIds, createdCourseId,
