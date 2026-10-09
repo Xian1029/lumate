@@ -105,44 +105,119 @@ def _has_headings_code_aware(markdown: str) -> bool:
     return False
 
 
-def _split_into_paragraphs(text: str, max_tokens: int = 500) -> list[dict]:
-    """Split text without headings into paragraph-based nodes.
+_NUMBERED_TOPIC_LINE = re.compile(
+    r"^\s*(?:第\s*[一二三四五六七八九十百千万\d０-９]+\s*[章节篇部分]|"
+    r"[０-９\d]+(?:\s*[.．、)、）]\s*[０-９\d]*)?\s+)[^。！？!?；;]{2,60}$"
+)
+_TOPIC_PUNCTUATION = re.compile(r"[。！？!?；;：:]$")
 
-    Uses Deep-Research separator priority: \\n\\n > \\n > ". " > " "
+
+def _looks_like_topic_line(line: str) -> bool:
+    """Return whether a line is likely a semantic title, not body prose."""
+    candidate = re.sub(r"\s+", " ", line).strip(" #\t")
+    if not candidate or len(candidate) < 3 or len(candidate) > 70:
+        return False
+    if candidate.startswith(("- ", "* ", "• ", "· ")) or _TOPIC_PUNCTUATION.search(candidate):
+        return False
+    if _NUMBERED_TOPIC_LINE.match(candidate):
+        return True
+    # Short standalone lines with no sentence punctuation are common in
+    # OCR'd handouts (e.g. "相反数的意义", "例题"). Require at least two
+    # Chinese/letter characters so page noise and isolated numbers do not
+    # become fake sections.
+    return bool(re.search(r"[\u4e00-\u9fffA-Za-z].*[\u4e00-\u9fffA-Za-z]", candidate)) and len(candidate) <= 32
+
+
+def _title_from_content(text: str, index: int) -> str:
+    """Create a useful, source-grounded title when no heading exists."""
+    first = re.split(r"(?<=[。！？!?；;])\s*", text.strip(), maxsplit=1)[0].strip()
+    first = re.sub(r"\s+", " ", first).strip("-•· ")
+    if len(first) > 42:
+        first = first[:42].rstrip("，,、；; ") + "…"
+    return _sanitize_title(first or f"正文内容 {index}")
+
+
+def _split_into_paragraphs(text: str, max_tokens: int = 420, *, semantic: bool = True) -> list[dict]:
+    """Build coherent sections when a source has no formal table of contents.
+
+    The fallback is content-driven: explicit numbered/standalone topic lines
+    become section boundaries; otherwise natural paragraphs and sentence
+    boundaries are grouped without cutting a sentence in half. This preserves
+    source order and gives every generated node a title derived from its own
+    evidence instead of arbitrary "page 1/page 2" labels.
     """
-    # First split by double newlines (paragraph boundaries)
-    paragraphs = text.split("\n\n")
-    nodes = []
-    current_chunk = []
+    normalized = re.sub(r"\r\n?", "\n", text).strip()
+    if not semantic:
+        paragraphs = [p.strip() for p in normalized.split("\n\n") if p.strip()]
+        chunks: list[dict] = []
+        current: list[str] = []
+        current_tokens = 0
+        for paragraph in paragraphs:
+            paragraph_tokens = _count_tokens(paragraph)
+            if current and current_tokens + paragraph_tokens > max_tokens:
+                chunks.append({"title": _sanitize_title(current[0][:80]), "text": "\n\n".join(current), "level": 1})
+                current, current_tokens = [], 0
+            current.append(paragraph)
+            current_tokens += paragraph_tokens
+        if current:
+            chunks.append({"title": _sanitize_title(current[0][:80]), "text": "\n\n".join(current), "level": 1})
+        return chunks
+    lines = normalized.split("\n")
+    has_topic_lines = any(_looks_like_topic_line(line) for line in lines)
+    sections: list[dict] = []
+
+    if has_topic_lines:
+        current_title: str | None = None
+        current_lines: list[str] = []
+
+        def flush() -> None:
+            nonlocal current_title, current_lines
+            body = "\n".join(current_lines).strip()
+            if body:
+                sections.append({
+                    "title": _sanitize_title(current_title or _title_from_content(body, len(sections) + 1)),
+                    "text": body,
+                    "level": 1,
+                })
+            current_title = None
+            current_lines = []
+
+        for line in lines:
+            candidate = re.sub(r"\s+", " ", line).strip(" #\t")
+            if _looks_like_topic_line(candidate):
+                flush()
+                current_title = candidate
+            elif candidate:
+                current_lines.append(candidate)
+        flush()
+        if sections:
+            return sections
+
+    # No reliable topic lines: use blank paragraphs first, then sentence
+    # boundaries for oversized paragraphs. Adjacent short paragraphs stay
+    # together when they form one coherent learning unit.
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", normalized) if p.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
     current_tokens = 0
+    for paragraph in paragraphs:
+        sentences = [s.strip() for s in re.split(r"(?<=[。！？!?；;])", paragraph) if s.strip()]
+        if not sentences:
+            sentences = [paragraph]
+        for sentence in sentences:
+            sentence_tokens = _count_tokens(sentence)
+            if current and current_tokens + sentence_tokens > max_tokens:
+                chunks.append(" ".join(current))
+                current, current_tokens = [], 0
+            current.append(sentence)
+            current_tokens += sentence_tokens
+    if current:
+        chunks.append(" ".join(current))
 
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-
-        para_tokens = _count_tokens(para)
-
-        if current_tokens + para_tokens > max_tokens and current_chunk:
-            nodes.append({
-                "title": _sanitize_title(current_chunk[0][:80]),
-                "text": "\n\n".join(current_chunk),
-                "level": 1,
-            })
-            current_chunk = []
-            current_tokens = 0
-
-        current_chunk.append(para)
-        current_tokens += para_tokens
-
-    if current_chunk:
-        nodes.append({
-            "title": _sanitize_title(current_chunk[0][:80]),
-            "text": "\n\n".join(current_chunk),
-            "level": 1,
-        })
-
-    return nodes
+    return [
+        {"title": _title_from_content(chunk, index), "text": chunk, "level": 1}
+        for index, chunk in enumerate(chunks, start=1)
+    ]
 
 
 def _markdown_to_tree(
@@ -166,7 +241,13 @@ def _markdown_to_tree(
 
     # Step 1: Quick heading check (early exit, avoids full scan)
     if not _has_headings_code_aware(markdown):
-        nodes = _build_tree_from_paragraphs(markdown, course_id, source_file)
+        # Preserve the dedicated textbook-outline recovery path when a formal
+        # contents block exists; semantic fallback is for genuinely unheaded
+        # material only.
+        has_formal_contents = _find_textbook_body_start(markdown.splitlines())[0] is not None
+        nodes = _build_tree_from_paragraphs(
+            markdown, course_id, source_file, semantic=not has_formal_contents,
+        )
         nodes = _restructure_textbook_nodes(nodes, course_id, source_file)
         return _thin_tree(nodes)
 
@@ -565,9 +646,11 @@ def _build_tree_from_paragraphs(
     markdown: str,
     course_id: uuid.UUID,
     source_file: str,
+    *,
+    semantic: bool = True,
 ) -> list[CourseContentTree]:
     """Build tree from paragraph splits when no headings are found."""
-    para_nodes = _split_into_paragraphs(markdown)
+    para_nodes = _split_into_paragraphs(markdown, semantic=semantic)
 
     if not para_nodes:
         # Single root node with all content
