@@ -15,8 +15,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1a1a" },
+    { color: "#ffffff" },
   ],
 };
 
@@ -49,7 +48,8 @@ export default function RootLayout({
     <html lang="zh" suppressHydrationWarning>
       <body className="antialiased">
         <ConnectionStatus />
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        {/* Lumate uses one consistent light visual language for every learner. */}
+        <ThemeProvider attribute="class" forcedTheme="light" defaultTheme="light" enableSystem={false}>
           <LocaleProvider>
             <Suspense fallback={null}><StudyTimeTracker /></Suspense>
             <TooltipProvider>
