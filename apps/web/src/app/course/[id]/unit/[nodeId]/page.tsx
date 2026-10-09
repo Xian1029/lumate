@@ -149,7 +149,7 @@ export default function UnitPage() {
           {loadingSignals ? (
             <p className="text-sm text-muted-foreground animate-pulse">{t("unit.loading.masteryTimeline")}</p>
           ) : (
-            <MasteryTimeline snapshots={masteryHistory} t={t} />
+            <MasteryTimeline snapshots={masteryHistory} t={t} tf={tf} />
           )}
         </section>
 
