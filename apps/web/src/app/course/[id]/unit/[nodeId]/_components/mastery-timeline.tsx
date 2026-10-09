@@ -6,6 +6,23 @@ import { Button } from "@/components/ui/button";
 type TranslateFn = (key: string) => string;
 type TranslateFormattedFn = (key: string, vars?: Record<string, string | number | null | undefined>) => string;
 
+const GAP_EXPLANATION_KEYS: Record<string, string> = {
+  fundamental_gap: "unit.masteryTimeline.gap.fundamental",
+  transfer_gap: "unit.masteryTimeline.gap.transfer",
+  trap_vulnerability: "unit.masteryTimeline.gap.trap",
+  conceptual: "unit.masteryTimeline.gap.conceptual",
+  procedural: "unit.masteryTimeline.gap.procedural",
+  computational: "unit.masteryTimeline.gap.computational",
+  reading: "unit.masteryTimeline.gap.reading",
+  careless: "unit.masteryTimeline.gap.careless",
+  mastered: "unit.masteryTimeline.gap.mastered",
+};
+
+function getGapExplanationKey(gapType: string): string {
+  const normalized = gapType.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return GAP_EXPLANATION_KEYS[normalized] ?? "unit.masteryTimeline.gap.fallback";
+}
+
 export function MasteryTimeline({ snapshots, t, tf }: { snapshots: MasterySnapshot[]; t: TranslateFn; tf: TranslateFormattedFn }) {
   if (snapshots.length === 0) {
     return <p className="rounded-2xl bg-sky-50/70 px-4 py-3 text-sm leading-6 text-sky-900">完成本小节的练习后，这里会按学习日期记录掌握变化，帮助你看见进步，而不是堆叠每一次答题记录。</p>;
@@ -26,7 +43,7 @@ export function MasteryTimeline({ snapshots, t, tf }: { snapshots: MasterySnapsh
             <span className="absolute -left-[1.8rem] top-1.5 size-3 rounded-full border-2 border-white bg-sky-500" />
             <div className="rounded-xl bg-muted/30 p-3">
               <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-foreground">{new Date(item.recordedAt).toLocaleDateString()}</p><span className="text-sm font-semibold text-sky-800">{item.masteryPercent}%</span></div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.gapType ? tf("unit.masteryTimeline.detectedGap", { type: getGapTypeLabel(item.gapType) }) : t("unit.masteryTimeline.noGap")}{item.sampleCount > 1 ? ` · ${tf("unit.masteryTimeline.sameDay", { count: item.sampleCount })}` : ""}</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.gapType ? tf(getGapExplanationKey(item.gapType), { type: getGapTypeLabel(item.gapType) }) : t("unit.masteryTimeline.noGap")}{item.sampleCount > 1 ? ` · ${tf("unit.masteryTimeline.sameDay", { count: item.sampleCount })}` : ""}</p>
             </div>
           </li>
         ))}
