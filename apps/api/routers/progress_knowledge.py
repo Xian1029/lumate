@@ -193,9 +193,13 @@ async def get_misconception_dashboard(
             sample["resolved"] = bool(wa.mastered)
         sample["review_count"] = max(sample["review_count"], wa.review_count or 0)
         if wa.last_reviewed_at and (
-            sample["last_reviewed_at"] is None or wa.last_reviewed_at > sample["last_reviewed_at"]
+            sample["last_reviewed_at"] is None
+            or wa.last_reviewed_at > sample["last_reviewed_at"]
         ):
-            sample["last_reviewed_at"] = wa.last_reviewed_at.isoformat()
+            # Keep a datetime while aggregating. Serializing here would make
+            # the next duplicate question compare datetime to str and return
+            # a 500, which surfaced in the UI as “服务暂时不可用”.
+            sample["last_reviewed_at"] = wa.last_reviewed_at
 
         detail = wa.error_detail if isinstance(wa.error_detail, dict) else {}
         if detail.get("misconception_type"):
@@ -257,7 +261,13 @@ async def get_misconception_dashboard(
 
         priority_score = round(active_errors * 0.6 + recency_boost * 0.4, 2)
 
-        samples = list(entry["question_map"].values())[:3]
+        samples = []
+        for sample in list(entry["question_map"].values())[:3]:
+            public_sample = dict(sample)
+            last_reviewed_at = public_sample.get("last_reviewed_at")
+            if last_reviewed_at is not None and hasattr(last_reviewed_at, "isoformat"):
+                public_sample["last_reviewed_at"] = last_reviewed_at.isoformat()
+            samples.append(public_sample)
         misconceptions.append({
             "concept": entry["concept"],
             "active_errors": active_errors,
