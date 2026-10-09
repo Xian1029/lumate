@@ -1,12 +1,15 @@
+name: lumate-customized
+
+# Safe default Compose stack for hosts that already run OpenTutor.  All
+# resources deliberately use the `lumate-customized` namespace, so running
+# `docker compose up -d` here can never replace `opentutor-*` containers.
 services:
   redis:
     image: redis:7.4-alpine
-    container_name: opentutor-redis
+    container_name: lumate-customized-redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redisdata:/data
+      - lumate_customized_redis:/data
     deploy:
       resources:
         limits:
@@ -26,7 +29,7 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_REQUIREMENTS: ${API_PYTHON_REQUIREMENTS:-requirements-core.txt}
-    container_name: opentutor-api
+    container_name: lumate-customized-api
     restart: unless-stopped
     deploy:
       resources:
@@ -36,9 +39,9 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8001}:8000"
     environment:
-      DATABASE_URL: sqlite+aiosqlite:////app/data/opentutor.db
+      DATABASE_URL: sqlite+aiosqlite:////app/data/lumate.db
       REDIS_URL: redis://redis:6379/0
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
@@ -60,14 +63,14 @@ services:
       CODE_SANDBOX_RUNTIME: ${CODE_SANDBOX_RUNTIME:-docker}
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3003,http://127.0.0.1:3003}
       UPLOAD_DIR: /app/uploads
       SCRAPE_FIXTURE_DIR: /fixtures/e2e/scrape
     volumes:
       - ./apps/api:/app
       - ./tests/e2e/fixtures:/fixtures/e2e:ro
-      - uploads:/app/uploads
-      - sqlite_data:/app/data
+      - lumate_customized_uploads:/app/uploads
+      - lumate_customized_data:/app/data
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -86,8 +89,9 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
-    container_name: opentutor-web
+        # This URL is resolved from inside the web container, not the host.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:8000/api}
+    container_name: lumate-customized-web
     restart: unless-stopped
     deploy:
       resources:
@@ -97,7 +101,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "${WEB_PORT:-3001}:3001"
+      - "${WEB_PORT:-3003}:3001"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001 || exit 1"]
       interval: 10s
@@ -108,6 +112,13 @@ services:
         condition: service_healthy
 
 volumes:
-  redisdata:
-  uploads:
-  sqlite_data:
+  lumate_customized_redis:
+    name: lumate-customized_redis
+  lumate_customized_uploads:
+    name: lumate-customized_uploads
+  lumate_customized_data:
+    name: lumate-customized_data
+
+networks:
+  default:
+    name: lumate-customized-network

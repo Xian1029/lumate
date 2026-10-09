@@ -21,8 +21,8 @@ services:
       SERVE_BUILTIN_UI: "false"
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set in production}
     volumes:
-      - uploads:/app/uploads
-      - sqlite_data:/app/data
+      - lumate_customized_uploads:/app/uploads
+      - lumate_customized_data:/app/data
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     # Don't bind-mount source code in production
     logging:

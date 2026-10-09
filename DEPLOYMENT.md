@@ -11,7 +11,7 @@
 - 前端端口：宿主机 `3003` → 容器 `3001`
 - API 端口：宿主机回环地址 `127.0.0.1:8001` → 容器 `8000`
 
-不要使用默认的 `docker-compose.yml` 操作 ECS 上的二开服务；始终显式指定 `docker-compose.deploy.yml`。
+默认 `docker-compose.yml` 与专用的 `docker-compose.deploy.yml` 都已使用 Lumate 隔离命名；即使误执行 `docker compose up -d`，也不会创建或替换 `opentutor-*` 容器。生产 ECS 仍推荐显式使用 `docker-compose.deploy.yml`。
 
 ## 部署前需要准备
 
