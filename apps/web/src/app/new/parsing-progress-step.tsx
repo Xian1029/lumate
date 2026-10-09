@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
-import { getContentTree, type ContentNode, type UploadPlan, type ProcessingWorkflowState } from "@/lib/api";
+import { getContentTree, type ContentNode, type IngestionJobSummary, type UploadPlan, type ProcessingWorkflowState } from "@/lib/api";
 import type { FileItem, ParseLog, ParseStep } from "./types";
 import { StepIndicator } from "./step-indicator";
 
 interface Props {
-  projectName: string; url: string; files: FileItem[]; parseSteps: ParseStep[]; parseProgress: number; parseLogs: ParseLog[];
+  projectName: string; url: string; files: FileItem[]; parseSteps: ParseStep[]; parseProgress: number; parseLogs: ParseLog[]; ingestionJobs: IngestionJobSummary[];
   canContinueToFeatures: boolean; allJobsFailed: boolean; hasFailedJobs: boolean; processingState: ProcessingWorkflowState; readyCourseIds: string[]; createdCourseId: string | null; createdCourseIds: string[];
   uploadPlan: UploadPlan | null; onConfirmParsedSpaces: () => void; onEnterWorkspace: (courseId?: string) => void; onReturnToUpload: () => void; t: (key: string) => string;
 }
@@ -33,6 +33,9 @@ export function ParsingProgressStep(props: Props) {
   // every provisional course creates blank panels and the misleading spinner
   // shown in the old flow.
   const previewIds = props.processingState === "PARTIALLY_READY" ? props.readyCourseIds : ids;
+  const noOutlineJobs = props.ingestionJobs.filter((job) =>
+    job.page_stats?.outline_integrity?.no_outline,
+  );
   const stateTitle: Record<ProcessingWorkflowState, string> = {
     UPLOADED: "正在接收资料", CLASSIFYING: "正在识别资料类型", NEEDS_CLASSIFICATION_CONFIRMATION: "等待确认资料归属", CLASSIFIED: "已完成资料分类", DETECTING_STRUCTURE: "正在读取教材目录", PARSING: "正在整理章节", PARTIALLY_READY: "部分学习空间已准备好", READY: "请确认教材目录", FAILED_RETRYABLE: "资料需要重新处理", FAILED_FINAL: "资料暂时无法处理", CANCELLED: "本次创建已取消",
   };
@@ -50,6 +53,7 @@ export function ParsingProgressStep(props: Props) {
         <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{props.parseSteps.map((step) => <div key={step.label} className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm"><StatusIcon status={step.status} /><span>{step.label}</span></div>)}</div>
       </section>
       {props.hasFailedJobs ? <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive"><span><CircleAlert className="mr-2 inline size-4" />有资料未完成解析；已准备好的学习内容仍可先使用。请重新上传失败资料。</span><button type="button" onClick={props.onReturnToUpload} className="rounded-lg border border-destructive/40 bg-background px-3 py-2 text-xs font-semibold">重新上传失败资料</button></section> : null}
+      {noOutlineJobs.length > 0 && successful ? <section className="rounded-2xl border border-amber-300/60 bg-amber-50/70 p-4 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/20 dark:text-amber-100"><p className="font-semibold">未检测到正式目录</p><p className="mt-1">这份材料仍可使用，系统已按正文内容自动分段，不会虚构章节目录。若材料本应包含目录，请返回并上传目录清晰、可复制文字的版本。</p></section> : null}
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm"><div className="border-b border-border px-5 py-4"><h2 className="font-semibold">教材目录与章节预览</h2><p className="mt-1 text-xs text-muted-foreground">可展开查看章、节和学习内容。较长目录可在此区域滚动。</p></div><div className="max-h-[54vh] overflow-y-auto p-4">{!successful ? <div className="flex min-h-56 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />正在读取目录…</div> : previewIds.map((id) => <DirectoryPreview key={id} title={props.projectName || "学习空间"} nodes={trees[id] ?? []} expanded={expanded} setExpanded={setExpanded} />)}</div></section>
       {props.processingState === "READY" && <section className="flex flex-col gap-3 rounded-2xl border border-brand/25 bg-brand-muted/20 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">解析结果已准备好</p><p className="text-sm text-muted-foreground">确认后将创建并发布 {ids.length || 1} 个学习空间。</p></div><button data-testid="confirm-create-spaces" type="button" onClick={props.onConfirmParsedSpaces} className="h-11 rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground hover:opacity-90">确认解析结果，创建学习空间</button></section>}
       {props.processingState === "PARTIALLY_READY" && <section className="rounded-2xl border border-brand/25 bg-brand-muted/20 p-5"><p className="font-semibold">已有学习空间可以开始使用</p><p className="mt-1 text-sm text-muted-foreground">其余资料仍会保留处理状态，不会阻止你先学习已准备好的内容。</p><div className="mt-3 flex flex-wrap gap-2">{props.readyCourseIds.map((id, index) => <button key={id} type="button" onClick={() => props.onEnterWorkspace(id)} className="h-10 rounded-lg bg-brand px-4 text-sm font-semibold text-brand-foreground">先进入{props.uploadPlan?.groups[index]?.suggested_name ?? "已准备好的学习空间"}</button>)}<button type="button" onClick={props.onReturnToUpload} className="h-10 rounded-lg border border-border px-4 text-sm">继续处理剩余资料</button></div></section>}

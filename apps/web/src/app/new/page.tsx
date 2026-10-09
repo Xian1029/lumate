@@ -53,6 +53,7 @@ export default function NewProjectPage() {
           parseSteps={p.parseSteps}
           parseProgress={p.parseProgress}
           parseLogs={p.parseLogs}
+          ingestionJobs={p.ingestionJobs}
           canContinueToFeatures={p.canContinueToFeatures}
           allJobsFailed={p.allJobsFailed}
           hasFailedJobs={p.hasFailedJob}

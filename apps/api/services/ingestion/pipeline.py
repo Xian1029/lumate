@@ -489,11 +489,19 @@ async def run_ingestion_pipeline(
             outline_complete, outline_report = assess_textbook_outline_integrity(
                 extracted, preview_nodes,
             )
-            # Keep the established page-statistics contract untouched for
-            # ordinary PDFs.  Integrity metadata exists only when a formal
-            # source TOC was actually detected and compared.
-            if outline_report.get("checked"):
-                job.page_stats = {**(job.page_stats or {}), "outline_integrity": outline_report}
+            # A missing formal TOC is not itself an ingestion failure. The
+            # parser already falls back to paragraph-based sections, so keep
+            # the material usable while recording the fact explicitly for the
+            # creation UI. We must never invent chapter names just to make a
+            # directory look complete.
+            if not outline_report.get("checked"):
+                outline_report = {
+                    **outline_report,
+                    "checked": False,
+                    "no_outline": True,
+                    "handling": "generated_sections_from_body",
+                }
+            job.page_stats = {**(job.page_stats or {}), "outline_integrity": outline_report}
             if not outline_complete:
                 _set_job_phase(
                     job,
@@ -524,6 +532,23 @@ async def run_ingestion_pipeline(
         dispatch_result = await _dispatch_content(db, job)
         job.dispatched = True
         job.dispatched_to = dispatch_result
+        text_categories = {"lecture_slides", "textbook", "notes", "syllabus"}
+        if job.content_category in text_categories and not (dispatch_result or {}).get("content_tree"):
+            _set_job_phase(
+                job,
+                status="failed",
+                progress_percent=70,
+                embedding_status="failed",
+                nodes_created=0,
+                error_message=(
+                    "未检测到可学习正文或目录。请上传包含正文内容的文件；"
+                    "没有正式目录的材料会按正文自动分段。"
+                ),
+            )
+            await _settle_failure_workflow(db, job)
+            await db.commit()
+            await _cleanup_unpublished_terminal_failure(db, job)
+            return job
         nodes_created = _count_created_nodes(dispatch_result)
         needs_embedding = bool((dispatch_result or {}).get("content_tree"))
         if needs_embedding:

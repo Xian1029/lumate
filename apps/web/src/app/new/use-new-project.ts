@@ -463,7 +463,7 @@ export function useNewProject() {
     autoScrape, setAutoScrape,
     features, toggleFeature, nlInput, setNlInput,
     showCanvasLogin, setShowCanvasLogin, canvasLogging, canvasLoginError,
-    parseSteps, parseProgress, parseLogs, canContinueToFeatures, allJobsFailed, hasFailedJob, processingState, readyCourseIds, createdCourseId,
+    parseSteps, parseProgress, parseLogs, ingestionJobs, canContinueToFeatures, allJobsFailed, hasFailedJob, processingState, readyCourseIds, createdCourseId,
     uploadPlan, fileAssignments, setFileAssignments, createdCourseIds,
     startParsing, confirmParsedSpaces, enterWorkspace,
     returnToUpload: async () => {

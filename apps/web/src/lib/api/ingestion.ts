@@ -11,6 +11,9 @@ export interface IngestionPageStats {
   unit: "pages" | "paragraphs" | "slides" | "sheets";
   outline_integrity?: {
     checked: boolean;
+    no_outline?: boolean;
+    handling?: "generated_sections_from_body";
+    reason?: string;
     expected_sections?: number;
     parsed_sections?: number;
     coverage?: number;
