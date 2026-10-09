@@ -350,6 +350,10 @@ def _markdown_to_tree(
 
 _CHAPTER_LINE = re.compile(r"^(第[一二三四五六七八九十百０-９\d]+章)\s*[：:·]?\s*(.{1,40})$")
 _UNIT_LINE = re.compile(r"^(第[一二三四五六七八九十百０-９\d]+单元)\s*(.*)$")
+# Language/humanities textbook PDFs frequently glue a running header to the
+# unit marker (for example ``活动·探究第一单元``).  Keep the marker itself so
+# the header does not become a lesson title.
+_UNIT_MARKER = re.compile(r"(?P<unit>第[一二三四五六七八九十百０-９\d]+单元)")
 _LESSON_LINE = re.compile(
     r"^(?P<number>[０-９\d]{1,2})\s*\*?\s+(?P<title>[\u4e00-\u9fff《“‘A-Za-z].{0,78})$"
 )
@@ -424,15 +428,32 @@ def _find_textbook_body_start(lines: list[str]) -> tuple[int | None, int | None]
         return None, None
 
     seen_structures: set[tuple[str, str]] = set()
+    seen_lessons: set[tuple[str, str]] = set()
     for index in range(toc_index + 1, len(lines)):
         match = _CHAPTER_LINE.match(lines[index])
         if match:
             key = ("chapter", _chapter_number_key(match.group(1)[1:-1]))
         else:
-            unit_match = _UNIT_LINE.match(lines[index])
-            if not unit_match:
+            unit_match = _UNIT_MARKER.search(lines[index])
+            if unit_match:
+                key = ("unit", _chapter_number_key(unit_match.group("unit")[1:-2]))
+            else:
+                # In language books, the first lesson is often the most
+                # stable duplicate marker: the contents page has e.g. ``2
+                # 首届诺贝尔奖颁发`` and the body repeats it after the page
+                # headers.  Use it only after a formal contents heading so
+                # ordinary notes are unaffected.
+                lesson_match = _LESSON_LINE.match(lines[index])
+                if not lesson_match:
+                    continue
+                lesson_key = (
+                    "lesson",
+                    _normalize_outline_number(lesson_match.group("number")),
+                )
+                if lesson_key in seen_lessons:
+                    return toc_index, index
+                seen_lessons.add(lesson_key)
                 continue
-            key = ("unit", _chapter_number_key(unit_match.group(1)[1:-2]))
         if key in seen_structures:
             return toc_index, index
         seen_structures.add(key)
@@ -483,8 +504,13 @@ def _restructure_unit_textbook_nodes(
             continue
 
         unit_match = _UNIT_LINE.match(line)
+        if not unit_match:
+            embedded_unit = _UNIT_MARKER.search(line)
+            if embedded_unit:
+                unit_match = embedded_unit
         if unit_match:
-            next_unit_key = _chapter_number_key(unit_match.group(1)[1:-2])
+            unit_text = unit_match.group("unit") if "unit" in unit_match.groupdict() else unit_match.group(1)
+            next_unit_key = _chapter_number_key(unit_text[1:-2])
             if unit is not None and unit_key == next_unit_key:
                 # Repeated page header; do not create a duplicate unit.
                 section = None
@@ -492,7 +518,7 @@ def _restructure_unit_textbook_nodes(
             unit_order += 1
             unit = CourseContentTree(
                 id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
-                title=unit_match.group(1), level=1, order_index=unit_order,
+                title=unit_text, level=1, order_index=unit_order,
                 source_file=source_file, source_type="pdf",
             )
             unit_key = next_unit_key
@@ -508,6 +534,21 @@ def _restructure_unit_textbook_nodes(
         if category_match:
             category = category_match.group(1)
             detail = category_match.group(2).strip()
+            # A PDF text layer can join a writing-section heading with the
+            # first explanatory sentence (``写作消息时，首先要……``).  That
+            # sentence is lesson content, not a directory entry.  Valid
+            # writing headings are short labels such as ``学写传记`` or
+            # ``说明事物要抓住特征``.
+            if (
+                category == "写作"
+                and (
+                    len(detail) > 24
+                    or re.search(r"[，。！？；：]", detail)
+                    or detail.startswith(("时", "消息时"))
+                )
+            ):
+                append_content(section or unit, line)
+                continue
             if detail.startswith("第") and "单元" in detail[:8]:
                 append_content(unit, line)
                 continue

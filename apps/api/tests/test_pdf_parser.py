@@ -30,6 +30,35 @@ def test_language_textbook_uses_units_and_numbered_lessons() -> None:
     assert all("૫" not in (node.title or "") for node in nodes)
 
 
+def test_language_textbook_does_not_promote_joined_writing_prose_to_outline() -> None:
+    # Real PEP language PDFs glue running headers to unit markers and may
+    # concatenate a writing heading with its first explanatory sentence.
+    markdown = normalize_pdf_markdown(
+        """目录
+第一单元
+2 首届诺贝尔奖颁发
+
+第一单元活动·探究
+1 消息二则
+消息正文。
+2 首届诺贝尔奖颁发
+课文正文。
+写作消息时，首先要确定一个恰当的标题。标题要准确概括消息的主要内容，如
+《首届诺贝尔奖颁发》。
+第二单元
+6 藤野先生
+课文正文。"""
+    ) or ""
+
+    nodes = _markdown_to_tree(markdown, uuid.uuid4(), "语文八年级上册.pdf")
+    titles = [node.title for node in nodes]
+
+    assert "第一单元" in titles
+    assert "1 消息二则" in titles
+    assert "2 首届诺贝尔奖颁发" in titles
+    assert not any("写作消息时" in (title or "") for title in titles)
+
+
 def test_unheaded_material_is_split_into_readable_sections() -> None:
     nodes = _markdown_to_tree(
         "第一段内容。这里有完整的说明。\n\n第二段内容。这里还有一个知识点。",
