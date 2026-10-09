@@ -113,14 +113,22 @@ async def get_misconception_dashboard(
 
     concept_map: dict[str, dict] = {}
     for wa, prob in wrong_rows:
-        metadata = prob.problem_metadata or {}
+        # Older practice rows may contain null or legacy scalar JSON values.
+        # Never let one malformed diagnostic record take down the whole
+        # dashboard; the learner should still see every usable blind spot.
+        metadata = prob.problem_metadata if isinstance(prob.problem_metadata, dict) else {}
         concept = metadata.get("core_concept") or metadata.get("topic")
+        knowledge_points = wa.knowledge_points
+        if isinstance(knowledge_points, str):
+            knowledge_points = [knowledge_points]
+        elif not isinstance(knowledge_points, (list, tuple)):
+            knowledge_points = []
         if (
             not isinstance(concept, str)
             or not concept.strip()
             or concept.strip().casefold() in {"unknown", "none", "null"}
-        ) and wa.knowledge_points:
-            concept = wa.knowledge_points[0] if isinstance(wa.knowledge_points, list) else wa.knowledge_points
+        ) and knowledge_points:
+            concept = next((point for point in knowledge_points if isinstance(point, str) and point.strip()), None)
         if not isinstance(concept, str) or not concept.strip() or concept.strip().casefold() in {"unknown", "none", "null"}:
             # Do not present missing metadata as a real learning blind spot.
             continue
@@ -189,19 +197,24 @@ async def get_misconception_dashboard(
         ):
             sample["last_reviewed_at"] = wa.last_reviewed_at.isoformat()
 
-        detail = wa.error_detail or {}
+        detail = wa.error_detail if isinstance(wa.error_detail, dict) else {}
         if detail.get("misconception_type"):
             entry["misconception_types"].append(detail["misconception_type"])
 
     for prog in gap_rows:
-        meta = prog.metadata_json or {}
+        meta = prog.metadata_json if isinstance(prog.metadata_json, dict) else {}
         probes = meta.get("comprehension_probes") or []
+        if not isinstance(probes, list):
+            continue
         for probe in probes:
-            if not probe.get("understood") and probe.get("concept"):
-                key = probe["concept"].lower().strip()
+            if not isinstance(probe, dict):
+                continue
+            probe_concept = probe.get("concept")
+            if not probe.get("understood") and isinstance(probe_concept, str) and probe_concept.strip():
+                key = probe_concept.lower().strip()
                 if key not in concept_map:
                     concept_map[key] = {
-                        "concept": probe["concept"],
+                        "concept": probe_concept.strip(),
                         "total_errors": 0,
                         "mastered_errors": 0,
                         "error_categories": {},

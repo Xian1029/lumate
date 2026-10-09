@@ -179,6 +179,27 @@ export function GraphView({ courseId, focusTerms, activeMaterialId }: GraphViewP
     ? nodes.find((node) => node.id === contextualNodeId) ?? null
     : nodes.find((node) => node.id === selectedId) ?? null;
 
+  // Keep the relationship card in the same coordinate system as the graph
+  // canvas. A fixed bottom-left panel made a click on a lower node look like
+  // it had no effect until the learner scrolled back to the top. The card now
+  // follows the selected node and flips above it when the node is near the
+  // bottom edge, so the explanation is always adjacent to what was clicked.
+  const selectedDetailLayout = useMemo(() => {
+    if (!selected) return null;
+    const width = Math.min(340, Math.max(240, canvasBounds.width - 24));
+    const halfWidth = width / 2;
+    const left = Math.min(
+      Math.max(selected.x, halfWidth + 12),
+      canvasBounds.width - halfWidth - 12,
+    );
+    const estimatedHeight = 154;
+    const placeAbove = selected.y + estimatedHeight > canvasBounds.height - 12;
+    const top = placeAbove
+      ? selected.y - selected.cardHeight / 2 - 12
+      : selected.y + selected.cardHeight / 2 + 12;
+    return { width, left, top, placeAbove };
+  }, [canvasBounds.width, canvasBounds.height, selected]);
+
   const handleNodeClick = useCallback(
     (node: SimNode) => {
       setSelectedId((currentId) => currentId === node.id ? null : node.id);
@@ -285,6 +306,10 @@ export function GraphView({ courseId, focusTerms, activeMaterialId }: GraphViewP
       <div
         className="relative flex min-h-full min-w-full justify-center"
         style={{ width: Math.max(viewport.width, canvasBounds.width), height: Math.max(viewport.height, canvasBounds.height) }}
+      >
+      <div
+        className="relative shrink-0"
+        style={{ width: canvasBounds.width, height: canvasBounds.height }}
       >
       <svg
         viewBox={`0 0 ${canvasBounds.width} ${canvasBounds.height}`}
@@ -412,9 +437,18 @@ export function GraphView({ courseId, focusTerms, activeMaterialId }: GraphViewP
           );
         })}
       </svg>
-      </div>
-      {selected ? (
-        <aside className="absolute bottom-3 left-3 m-3 max-w-md rounded-xl border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur" aria-live="polite">
+      {selected && selectedDetailLayout ? (
+        <aside
+          className="pointer-events-auto absolute z-10 rounded-xl border border-border bg-card/95 p-3 text-xs shadow-lg backdrop-blur"
+          style={{
+            width: selectedDetailLayout.width,
+            left: selectedDetailLayout.left,
+            top: selectedDetailLayout.top,
+            transform: selectedDetailLayout.placeAbove ? "translate(-50%, -100%)" : "translateX(-50%)",
+          }}
+          aria-live="polite"
+          data-testid="graph-node-details"
+        >
           <p className="font-semibold text-foreground">{selected.label}</p>
           {selectedRelationships.length ? (
             <ul className="mt-1.5 space-y-1 text-muted-foreground">
@@ -425,8 +459,9 @@ export function GraphView({ courseId, focusTerms, activeMaterialId }: GraphViewP
           ) : <p className="mt-1 text-muted-foreground">该知识点暂未建立明确的知识依赖；当前仅保留教材范围与学习进度。</p>}
         </aside>
       ) : null}
-
       </div>
+      </div>
+    </div>
     </div>
   );
 }
