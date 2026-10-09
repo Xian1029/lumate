@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 # ── Step 0: Filename regex patterns (expanded) ──
 
 FILENAME_PATTERNS = {
+    # Chinese textbook filenames do not contain the English tokens below.
+    # Match publisher/grade/edition markers before falling back to an LLM so
+    # self-hosted deployments can classify教材 without an external provider.
+    r"(?:教材|教科书|课本|教辅|人教版|北师大版|苏教版|鲁教版|粤教版|科粤版|译林版|苏少版|五四制|七年级|八年级|九年级|上册|下册|全一册|教师用书|学生读本|数学|语文|英语|生物|化学|物理|地理|历史|道德与法治|音乐|美术|信息技术|综合实践|劳动技术|[六七八九]\s*[上下ABab]|[6789]\s*[上下]|[6789][ABab])": "textbook",
     r"(?i)lecture|slides|ppt|lec\d|class.?note|presentation": "lecture_slides",
     r"(?i)chapter|textbook|reading|book|reference|manual|guide": "textbook",
     r"(?i)hw|homework|assignment|problem.?set|ps\d|worksheet|exercise|lab\b|project\b": "assignment",
@@ -26,6 +30,12 @@ FILENAME_PATTERNS = {
 
 # Content heuristics — patterns matched against extracted text (zero LLM cost)
 CONTENT_HEURISTICS = [
+    # These markers are common even when the PDF's目录 is split across lines
+    # or the extracted text has unusual spacing. Keep this broad, since the
+    # filename/content classifier is only used to choose the textbook parser.
+    (r"(?:义务教育教科书|本册导引|前言与目录|目\s*录)", "textbook"),
+    (r"(?:义务教育教科书|本册导引|前言与目录|目\s*录).{0,1000}(?:第[一二三四五六七八九十百千万\d０-９]+\s*[章节单元]|\d+\s*[．.]\s*\d+)", "textbook"),
+    (r"(?:第[一二三四五六七八九十百千万\d０-９]+\s*[章节单元]).{0,80}(?:目录|小结|复习题|阅读与思考)", "textbook"),
     (r"(?i)(due\s+date|submit\s+by|deadline|turn\s+in|submission)", "assignment"),
     (r"(?i)(grading\s+policy|office\s+hours|prerequisites|course\s+description|learning\s+objectives)", "syllabus"),
     (r"(?i)(slide\s+\d+|next\s+slide|previous\s+slide)", "lecture_slides"),

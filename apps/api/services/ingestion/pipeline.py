@@ -437,6 +437,14 @@ async def run_ingestion_pipeline(
             await db.commit()
             return job
 
+        # All extractors (Crawl4AI, Marker, and pypdf) must feed the same
+        # normalized text into classification and tree construction. This is
+        # especially important for Chinese PDF目录 where glyph spacing and
+        # page headers otherwise hide the textbook signals.
+        from services.content_text import normalize_pdf_markdown
+        extracted = normalize_pdf_markdown(extracted) or ""
+        job.extracted_markdown = extracted
+
         # Partial extraction: some PDF pages were unreadable. Record page-level
         # statistics, strip the marker, and continue with the readable pages.
         # Only fail entirely when NOTHING could be read (handled above).

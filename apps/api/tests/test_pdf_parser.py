@@ -1,6 +1,7 @@
 import uuid
 
 from services.content_text import clean_course_text, normalize_pdf_markdown
+from services.ingestion.classification import classify_by_content_heuristics, classify_by_filename
 from services.parser.pdf import _markdown_to_tree
 
 
@@ -38,3 +39,10 @@ def test_unheaded_material_is_split_into_readable_sections() -> None:
 
     assert len(nodes) >= 2
     assert all((node.title or "").strip() for node in nodes)
+
+
+def test_chinese_textbook_names_and_directory_markers_are_classified_locally() -> None:
+    assert classify_by_filename("人教版初中数学 七年级上册 课本.pdf") == "textbook"
+    assert classify_by_filename("义务教育教科书语文七年级下册.pdf") == "textbook"
+    assert classify_by_filename("京版7上_opt.pdf") == "textbook"
+    assert classify_by_content_heuristics("义务教育教科书\n目录\n第一章 有理数\n1.1 正数和负数") == "textbook"
