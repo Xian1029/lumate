@@ -123,6 +123,69 @@ Mermaid rules:
 Always output valid Mermaid syntax wrapped in ```mermaid blocks.
 Always output valid KaTeX wrapped in $ or $$ delimiters."""
 
+
+def build_fallback_notes(content: str | None, title: str | None) -> str:
+    """Build a deterministic, readable note when an LLM is unavailable.
+
+    The source text is still preserved, but it is never shown as a single
+    wall of OCR text. This gives every subject the same learner-facing note
+    structure and lets quiz/flashcard generation consume stable headings.
+    """
+    source = normalize_generated_markdown(content)
+    heading = normalize_generated_markdown(title) or "本节内容"
+    if not source:
+        return f"# {heading}\n\n暂时没有可整理的正文内容。"
+
+    # Keep existing markdown headings as section boundaries. For PDF text
+    # without headings, split into short sentences so each bullet carries one
+    # idea and the note remains scannable for K12 learners.
+    sections: list[tuple[str, str]] = []
+    current: list[str] = []
+    for raw in source.splitlines():
+        line = raw.strip()
+        if not line:
+            if current:
+                sections.append(("", " ".join(current)))
+                current = []
+            continue
+        if re.match(r"^#{1,4}\s+", line):
+            if current:
+                sections.append(("", " ".join(current)))
+                current = []
+            sections.append((re.sub(r"^#{1,4}\s+", "", line), ""))
+        else:
+            current.append(line)
+    if current:
+        sections.append(("", " ".join(current)))
+
+    sentences: list[str] = []
+    for section_title, body in sections:
+        if section_title and len(section_title) <= 80:
+            sentences.append(f"【{section_title}】")
+        if body:
+            sentences.extend(
+                part.strip()
+                for part in re.split(r"(?<=[。！？；.!?])\s*", body)
+                if part.strip()
+            )
+    points = [item for item in sentences if item and not item.startswith("【")]
+    if not points:
+        points = [source]
+    points = points[:8]
+    bullets = "\n".join(f"- {item[:180]}" for item in points)
+    return (
+        f"# {heading}\n\n"
+        "## 本节学什么\n"
+        f"本节围绕“{heading}”整理教材内容，先抓住核心概念，再结合原文理解细节。\n\n"
+        "## 核心内容\n"
+        f"{bullets}\n\n"
+        "## 学习提醒\n"
+        "- 先用自己的话复述本节要点，再回到教材核对关键词、定义和例子。\n"
+        "- 遇到不理解的地方，标记具体句子或公式，随后在练习中验证。\n\n"
+        "## 自测一下\n"
+        f"你能不用看原文，说清楚“{heading}”最重要的一个结论或方法吗？"
+    )
+
 CHILD_FRIENDLY_WRITING_PROMPT = """Write notes that a child can read independently.
 
 Use the same language as the source material. Make the explanation coherent, not
@@ -189,9 +252,17 @@ Important:
 
     user_message = f"## {title}\n\n{content}"
 
-    client = get_llm_client()
-    result, _ = await client.chat(system_prompt, user_message)
-    return normalize_generated_markdown(result)
+    try:
+        client = get_llm_client()
+        result, _ = await client.chat(system_prompt, user_message)
+        normalized = normalize_generated_markdown(result)
+        if normalized and "No LLM API key configured" not in normalized:
+            return normalized
+    except Exception:
+        # Auto-generation must not fall back to an unreadable raw-content
+        # card just because a provider is unavailable.
+        pass
+    return build_fallback_notes(content, title)
 
 
 async def restructure_content_tree(

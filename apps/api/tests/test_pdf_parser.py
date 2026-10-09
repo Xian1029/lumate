@@ -3,6 +3,7 @@ import uuid
 from services.content_text import clean_course_text, normalize_pdf_markdown
 from services.ingestion.classification import classify_by_content_heuristics, classify_by_filename
 from services.parser.pdf import _markdown_to_tree
+from services.parser.notes import build_fallback_notes
 
 
 def test_pdf_cleanup_keeps_line_boundaries_and_removes_font_garbage() -> None:
@@ -75,3 +76,16 @@ def test_chinese_textbook_names_and_directory_markers_are_classified_locally() -
     assert classify_by_filename("义务教育教科书语文七年级下册.pdf") == "textbook"
     assert classify_by_filename("京版7上_opt.pdf") == "textbook"
     assert classify_by_content_heuristics("义务教育教科书\n目录\n第一章 有理数\n1.1 正数和负数") == "textbook"
+
+
+def test_fallback_notes_are_structured_instead_of_raw_source_wall() -> None:
+    note = build_fallback_notes(
+        "春天来了。小草从土里钻出来，嫩嫩的。\n\n春风像母亲的手。",
+        "1 春",
+    )
+
+    assert "# 1 春" in note
+    assert "## 本节学什么" in note
+    assert "## 核心内容" in note
+    assert "## 自测一下" in note
+    assert "小草从土里钻出来" in note

@@ -19,7 +19,7 @@ from services.auth.dependency import get_current_user
 from services.course_access import get_course_or_404
 from services.llm.readiness import ensure_llm_ready
 from services.content_text import is_assessment_content
-from services.parser.notes import normalize_generated_markdown, restructure_notes
+from services.parser.notes import build_fallback_notes, normalize_generated_markdown, restructure_notes
 from services.preference.engine import resolve_preferences
 
 router = APIRouter()
@@ -282,6 +282,14 @@ async def delete_personal_note(
     await get_course_or_404(db, course_id, user_id=user.id)
 
     from models.generated_asset import GeneratedAsset
+    node_result = await db.execute(
+        select(CourseContentTree).where(
+            CourseContentTree.id == node_id,
+            CourseContentTree.course_id == course_id,
+        )
+    )
+    node = node_result.scalar_one_or_none()
+    raw_source = normalize_generated_markdown(node.content) if node and node.content else ""
     result = await db.execute(
         select(GeneratedAsset).where(
             GeneratedAsset.id == note_id,
@@ -310,6 +318,14 @@ async def get_generated_note_for_node(
     await get_course_or_404(db, course_id, user_id=user.id)
 
     from models.generated_asset import GeneratedAsset
+    node_result = await db.execute(
+        select(CourseContentTree).where(
+            CourseContentTree.id == node_id,
+            CourseContentTree.course_id == course_id,
+        )
+    )
+    node = node_result.scalar_one_or_none()
+    raw_source = normalize_generated_markdown(node.content) if node and node.content else ""
     result = await db.execute(
         select(GeneratedAsset)
         .where(
@@ -324,17 +340,49 @@ async def get_generated_note_for_node(
     for asset in assets:
         meta = asset.metadata_ or {}
         if meta.get("source_node_id") == str(node_id):
+            markdown = normalize_generated_markdown((asset.content or {}).get("markdown"))
+            # Legacy auto-generation could persist the extracted source as the
+            # note body. Treat an exact raw-source match as a missing note and
+            # return the deterministic structured version below.
+            if raw_source and markdown == raw_source:
+                return {
+                    "id": f"fallback-{node_id}",
+                    "title": normalize_generated_markdown(node.title if node else asset.title),
+                    "markdown": build_fallback_notes(raw_source, node.title if node else asset.title),
+                    "format": "structured_fallback",
+                    "auto_generated": False,
+                    "version": asset.version,
+                }
             return {
                 "id": str(asset.id),
                 "title": normalize_generated_markdown(asset.title),
                 # Older note assets predate the write-time normalizer. Reading
                 # through the same boundary keeps legacy notes from rendering
                 # as mojibake without mutating them during a GET request.
-                "markdown": normalize_generated_markdown((asset.content or {}).get("markdown")),
+                "markdown": markdown,
                 "format": (meta.get("format") or "bullet_point"),
                 "auto_generated": meta.get("auto_generated", False),
                 "version": asset.version,
             }
+
+    # A provider outage or a legacy course may have no saved AI asset. Return
+    # the same structured note shape instead of making the unit page render a
+    # raw wall of extracted PDF text. This keeps all subjects consistent and
+    # remains deterministic until the learner regenerates an AI note.
+    if node and node.content and is_assessment_content(
+        node.title,
+        node.content,
+        content_category=node.content_category,
+        level=node.level,
+    ):
+        return {
+            "id": f"fallback-{node.id}",
+            "title": normalize_generated_markdown(node.title),
+            "markdown": build_fallback_notes(node.content, node.title),
+            "format": "structured_fallback",
+            "auto_generated": False,
+            "version": 0,
+        }
     return None
 
 
