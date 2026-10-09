@@ -1,6 +1,17 @@
 # Lumate 部署说明
 
-本文档描述单机 Docker 部署所需的内容。部署包包含三个服务：Next.js 前端、FastAPI 后端和 Redis。SQLite 数据库、上传文件和 Redis 数据都保存在 Docker 命名卷中，容器重建不会丢失学习空间数据。
+本文档描述 Lumate 二开版在已有 OpenTutor ECS 主机上的隔离部署方式。部署包包含三个服务：Next.js 前端、FastAPI 后端和 Redis。SQLite 数据库、上传文件和 Redis 数据都保存在 Lumate 专用 Docker 命名卷中，容器重建不会丢失学习空间数据，也不会触碰现有 `opentutor-*` 容器、网络或数据卷。
+
+本部署文件固定使用以下隔离资源：
+
+- Compose 项目：`lumate-customized`
+- 容器：`lumate-customized-web`、`lumate-customized-api`、`lumate-customized-redis`
+- 网络：`lumate-customized-network`
+- 数据卷：`lumate-customized_data`、`lumate-customized_uploads`、`lumate-customized_redis`
+- 前端端口：宿主机 `3003` → 容器 `3001`
+- API 端口：宿主机回环地址 `127.0.0.1:8001` → 容器 `8000`
+
+不要使用默认的 `docker-compose.yml` 操作 ECS 上的二开服务；始终显式指定 `docker-compose.deploy.yml`。
 
 ## 部署前需要准备
 
@@ -22,7 +33,11 @@ openssl rand -hex 32
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 # 将上面两条命令的结果和 LLM API key 写入 deploy/.env.production
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml up -d --build
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml up -d --build
+
+# 确认没有复用 OpenTutor 的容器
+docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml ps
+docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|opentutor' || true
 ```
 
 `deploy/.env.production` 只存在于部署主机，不要提交到 Git。首次启动会创建数据库表和系统初始数据；之后可将 `APP_AUTO_CREATE_TABLES` 与 `APP_AUTO_SEED_SYSTEM` 改为 `false`，再执行 `docker compose ... up -d`。
@@ -31,7 +46,7 @@ docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml up
 
 ```bash
 # 查看服务状态
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml ps
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml ps
 
 # 后端存活检查（API 仅绑定到本机回环地址）
 curl http://127.0.0.1:${API_PORT:-8001}/api/health/live
@@ -39,30 +54,30 @@ curl http://127.0.0.1:${API_PORT:-8001}/api/health/live
 # 前端地址：http://localhost:${WEB_PORT:-3003}
 
 # 查看日志
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml logs -f api web
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml logs -f api web
 
 # 更新代码后重新构建
 git pull --ff-only origin main
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml up -d --build
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml up -d --build
 
 # 停止服务（不删除数据卷）
-docker compose --env-file deploy/.env.production -f docker-compose.deploy.yml down
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml down
 ```
 
 只应将 Web 端口暴露到公网；API 端口默认绑定 `127.0.0.1`，由 Next.js 服务端代理 `/api/*`。如果部署在反向代理（Nginx、Caddy 或云负载均衡）之后，请把 `CORS_ORIGINS` 改为实际的 HTTPS 域名，并按需设置 `TRUST_PROXY_HEADERS=true`。
 
 ## 备份与恢复
 
-停止或暂停写入后，备份以下两个卷：`lumate_data`（SQLite 数据库、学习空间和进度）以及 `lumate_uploads`（教材和解析产物）。
+停止或暂停写入后，备份以下两个卷：`lumate-customized_data`（SQLite 数据库、学习空间和进度）以及 `lumate-customized_uploads`（教材和解析产物）。
 
 ```bash
-docker run --rm -v lumate_data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/lumate_data.tgz -C /data .
-docker run --rm -v lumate_uploads:/data -v "$PWD":/backup alpine \
-  tar czf /backup/lumate_uploads.tgz -C /data .
+docker run --rm -v lumate-customized_data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/lumate_customized_data.tgz -C /data .
+docker run --rm -v lumate-customized_uploads:/data -v "$PWD":/backup alpine \
+  tar czf /backup/lumate_customized_uploads.tgz -C /data .
 ```
 
-恢复前先停止 Compose，再将对应压缩包解压回同名卷。不要删除 `lumate_data` 或 `lumate_uploads`，否则会清空学习空间数据和教材文件。
+恢复前先停止 Compose，再将对应压缩包解压回同名卷。不要删除 `lumate-customized_data` 或 `lumate-customized_uploads`，否则会清空学习空间数据和教材文件。
 
 ## 常见问题
 

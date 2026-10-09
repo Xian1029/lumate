@@ -1,4 +1,4 @@
-name: lumate
+name: lumate-customized
 
 # Production-oriented deployment for a single host.
 # Keep docker-compose.yml for local development; this file has no source-code
@@ -6,11 +6,11 @@ name: lumate
 services:
   redis:
     image: redis:7.4-alpine
-    container_name: lumate-redis
+    container_name: lumate-customized-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - lumate_redis:/data
+      - lumate_customized_redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_REQUIREMENTS: ${API_PYTHON_REQUIREMENTS:-requirements-core.txt}
-    container_name: lumate-api
+    container_name: lumate-customized-api
     restart: unless-stopped
     ports:
       # The API is only needed by the web proxy; keep it off the public network.
@@ -68,8 +68,8 @@ services:
       CODE_SANDBOX_IMAGE: ${CODE_SANDBOX_IMAGE:-python:3.11-alpine}
       ALLOW_INSECURE_PROCESS_SANDBOX: ${ALLOW_INSECURE_PROCESS_SANDBOX:-false}
     volumes:
-      - lumate_uploads:/app/uploads
-      - lumate_data:/app/data
+      - lumate_customized_uploads:/app/uploads
+      - lumate_customized_data:/app/data
       # Required only when CODE_SANDBOX_BACKEND=container (the secure default).
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     extra_hosts:
@@ -94,7 +94,7 @@ services:
       args:
         # Browser requests stay same-origin and are proxied by Next.js.
         NEXT_PUBLIC_API_URL: http://api:8000/api
-    container_name: lumate-web
+    container_name: lumate-customized-web
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-3003}:3001"
@@ -111,6 +111,13 @@ services:
       - no-new-privileges:true
 
 volumes:
-  lumate_redis:
-  lumate_uploads:
-  lumate_data:
+  lumate_customized_redis:
+    name: lumate-customized_redis
+  lumate_customized_uploads:
+    name: lumate-customized_uploads
+  lumate_customized_data:
+    name: lumate-customized_data
+
+networks:
+  default:
+    name: lumate-customized-network
