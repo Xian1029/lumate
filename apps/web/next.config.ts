@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 import path from "path";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+// The customized local stack uses API 8001. Docker production overrides this
+// at build time with the internal `api:8000` service URL.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001/api";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
