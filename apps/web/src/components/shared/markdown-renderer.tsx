@@ -8,6 +8,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { buildMermaidFallbackText, hasRenderableMermaidContent, stabilizeMermaidCode } from "@/lib/markdown/mermaid";
 import { t } from "@/lib/i18n";
+import { createClientId } from "@/lib/utils";
 import "katex/dist/katex.min.css";
 
 type MermaidInstance = typeof import("mermaid")["default"];
@@ -38,10 +39,7 @@ function getMermaid() {
 }
 
 function createMermaidRenderId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `mermaid-${crypto.randomUUID()}`;
-  }
-  return `mermaid-${Math.random().toString(36).slice(2, 10)}`;
+  return createClientId("mermaid");
 }
 
 function MermaidBlock({ code }: { code: string }) {

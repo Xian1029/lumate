@@ -63,6 +63,14 @@ class OpenAIClient(LLMClient):
 
         Classifies errors: unreachable / auth / rate_limit / timeout / server_error.
         """
+        # Do not keep probing an already-open circuit.  The health monitor runs
+        # every 30 seconds; without this guard an offline local backend emits a
+        # new failure on every pass and continually restarts the reset timer.
+        # `is_healthy` automatically permits one new probe after the circuit's
+        # reset timeout, so recovery remains automatic.
+        if self._circuit_open and not self.is_healthy:
+            return False
+
         if self.provider_name == "deepseek":
             # /models proves authentication, not usable generation credit.
             # This free account probe lets a top-up recover the circuit and

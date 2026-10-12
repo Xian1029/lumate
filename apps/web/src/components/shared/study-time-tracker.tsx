@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { API_BASE, buildSecureRequestInit } from "@/lib/api/client";
+import { createClientId } from "@/lib/utils";
 
 type StudyActivity = "reading" | "notes" | "practice" | "review" | "graph";
 
@@ -121,11 +122,11 @@ function getSessionId(context: StudyContext): string {
       sessionStorage.setItem(key, JSON.stringify({ id: stored.id, lastSeen: Date.now() }));
       return stored.id;
     }
-    const id = crypto.randomUUID();
+    const id = createClientId("study-session");
     sessionStorage.setItem(key, JSON.stringify({ id, lastSeen: Date.now() }));
     return id;
   } catch {
-    return crypto.randomUUID();
+    return createClientId("study-session");
   }
 }
 
@@ -135,7 +136,7 @@ export function StudyTimeTracker() {
   const searchParams = useSearchParams();
   const query = searchParams.toString();
   const context = useMemo(() => parseStudyContext(pathname, query), [pathname, query]);
-  const tabId = useRef<string>(crypto.randomUUID());
+  const tabId = useRef<string>(createClientId("study-tab"));
   const lastActivityAt = useRef(0);
   const lastTickAt = useRef(0);
   const activeSeconds = useRef(0);
@@ -178,7 +179,7 @@ export function StudyTimeTracker() {
     if (elapsed <= 0) return;
 
     const payload: PendingHeartbeat = {
-      heartbeat_id: crypto.randomUUID(),
+      heartbeat_id: createClientId("study-heartbeat"),
       client_session_id: clientSessionId.current,
       course_id: context.courseId,
       content_node_id: context.contentNodeId,

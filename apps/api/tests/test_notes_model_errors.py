@@ -52,6 +52,29 @@ async def test_balance_probe_reports_unavailable_then_recovers_after_topup(monke
 
 
 @pytest.mark.asyncio
+async def test_open_circuit_skips_repeated_local_backend_probes(monkeypatch):
+    from services.llm.providers import openai_client as module
+
+    client = OpenAIClient('synthetic-test-key', 'llama3.2:3b', 'http://localhost:11434/v1', name='ollama')
+    client.mark_unhealthy('unreachable')
+    client.mark_unhealthy('unreachable')
+    client.mark_unhealthy('unreachable')
+
+    called = False
+
+    def should_not_probe(**kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError('an open circuit must not make another network request')
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', should_not_probe)
+    assert not await client.ping()
+    assert called is False
+    assert client._consecutive_failures == 3
+    await client.client.close()
+
+
+@pytest.mark.asyncio
 async def test_readiness_returns_actionable_balance_error(monkeypatch):
     from services.llm import readiness
     monkeypatch.setattr(readiness, 'get_llm_runtime_status', AsyncMock(return_value={

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cn } from "./utils";
+import { cn, createClientId } from "./utils";
 
 describe("cn", () => {
   it("merges class names", () => {
@@ -15,3 +15,17 @@ describe("cn", () => {
   });
 });
 
+describe("createClientId", () => {
+  it("creates an ID even when randomUUID is unavailable", () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: { getRandomValues: (bytes: Uint8Array) => bytes.fill(7) },
+    });
+    try {
+      expect(createClientId("test")).toBe("test-07070707-0707-0707-0707-070707070707");
+    } finally {
+      Object.defineProperty(globalThis, "crypto", { configurable: true, value: originalCrypto });
+    }
+  });
+});
