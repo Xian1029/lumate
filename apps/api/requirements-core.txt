@@ -33,6 +33,7 @@ xxhash==3.6.0
 
 # PDF extraction
 pypdf>=6.0.0
+pdfplumber>=0.11,<0.12
 
 # Content Classification
 thefuzz==0.22.1

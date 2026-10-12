@@ -36,6 +36,7 @@ dependencies = [
     "python-pptx>=1.0.0",
     "python-docx>=1.1.0",
     "filetype>=1.2.0",
+    "pdfplumber>=0.11,<0.12",
 
     # Utilities
     "tiktoken>=0.7.0",
@@ -92,6 +93,9 @@ include = [
     "utils*",
 ]
 exclude = ["tests*", "alembic*", "uploads*", "sessions*", "plugins*"]
+
+[tool.setuptools.package-data]
+"services.ingestion" = ["*.swift"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "BLE001"]

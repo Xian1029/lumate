@@ -40,7 +40,9 @@ function showApiErrorToast(err: ApiError): void {
     // eslint-disable-next-line no-console
     console.error("[api]", err.status, err.code ?? "", err.detail ?? err.message);
   }
-  const description = toUserFacingError(err.status, t("ui.request_failed"));
+  const description = err.code === "llm_insufficient_balance"
+    ? err.message
+    : toUserFacingError(err.status, t("ui.request_failed"));
   toast.error(t("ui.request_failed"), {
     id: err.status === 429 ? "api-rate-limit" : undefined,
     description,
@@ -59,7 +61,9 @@ export class ApiError extends Error {
 
   constructor(message: string, options: { status: number; code?: string; detail?: string }) {
     // message 面向用户（中文），detail 保留原始技术信息。
-    super(toUserFacingError(options.status, message));
+    super(options.code === "llm_insufficient_balance"
+      ? "AI 服务账户余额不足，请充值或更换有可用额度的 API Key 后重新生成笔记。"
+      : toUserFacingError(options.status, message));
     this.name = "ApiError";
     this.status = options.status;
     this.code = options.code;
@@ -195,6 +199,8 @@ function parseFilenameFromDisposition(contentDisposition: string | null): string
 }
 
 export interface ApiRequestOptions extends RequestInit {
+  /** AI generation may need more time than a normal page read. */
+  timeoutMs?: number;
   /** Use for page-entry reads where a missing local API must fail fast instead
    * of leaving the screen in a misleading multi-retry loading state. */
   retry?: boolean;
@@ -204,7 +210,7 @@ export interface ApiRequestOptions extends RequestInit {
 }
 
 export async function request<T>(path: string, options?: ApiRequestOptions): Promise<T> {
-  const { retry = true, suppressErrorToast = false, ...requestOptions } = options ?? {};
+  const { retry = true, suppressErrorToast = false, timeoutMs = REQUEST_TIMEOUT_MS, ...requestOptions } = options ?? {};
   const fetchOptions = buildSecureRequestInit({
     ...requestOptions,
     includeJsonContentType: true,
@@ -219,7 +225,7 @@ export async function request<T>(path: string, options?: ApiRequestOptions): Pro
   const maxRetries = retry && isReadRequest ? MAX_RETRIES : 0;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...fetchOptions,

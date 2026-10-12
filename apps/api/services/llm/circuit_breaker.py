@@ -34,6 +34,7 @@ class CircuitBreakerMixin:
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
         self._circuit_open_time: float = 0
+        self._last_error: str | None = None
 
     @property
     def is_healthy(self) -> bool:
@@ -55,6 +56,7 @@ class CircuitBreakerMixin:
     def mark_unhealthy(self, error: str):
         """Progressive cooldown + circuit breaker (openakita + circuitbreaker pattern)."""
         self._healthy = False
+        self._last_error = error
         self._consecutive_failures += 1
 
         # Circuit breaker: open after threshold
@@ -74,6 +76,7 @@ class CircuitBreakerMixin:
 
     def mark_healthy(self):
         self._healthy = True
+        self._last_error = None
         self._consecutive_failures = 0
         self._cooldown_until = 0
         self._circuit_open = False

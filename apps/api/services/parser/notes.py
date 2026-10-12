@@ -221,6 +221,8 @@ async def restructure_notes(
     title: str,
     note_format: str = "bullet_point",
     visual_preference: str = "auto",
+    *,
+    allow_fallback: bool = True,
 ) -> str:
     """Restructure content based on user preference format.
 
@@ -258,10 +260,17 @@ Important:
         normalized = normalize_generated_markdown(result)
         if normalized and "No LLM API key configured" not in normalized:
             return normalized
-    except Exception:
+    except Exception as exc:
+        if not allow_fallback:
+            from libs.exceptions import LLMInsufficientBalanceError
+            if getattr(exc, "status_code", None) == 402 or "insufficient balance" in str(exc).lower():
+                raise LLMInsufficientBalanceError() from exc
+            raise
         # Auto-generation must not fall back to an unreadable raw-content
         # card just because a provider is unavailable.
         pass
+    if not allow_fallback:
+        raise RuntimeError("AI 笔记生成返回空内容，请重试。")
     return build_fallback_notes(content, title)
 
 

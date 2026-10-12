@@ -115,7 +115,11 @@ def configure_logging() -> None:
     # ``aiosqlite`` emits every SQL operation at DEBUG.  In local development
     # that can flood api.log during startup/seeding and obscure an actual
     # startup failure, while the application logger remains fully available.
-    for noisy in ("uvicorn.access", "httpcore", "httpx", "openai", "anthropic", "aiosqlite"):
+    # pdfminer logs every PDF token/path/glyph at DEBUG. A large textbook can
+    # produce gigabytes of output, slowing extraction past the upload proxy
+    # deadline even though the parser itself is correct.
+    for noisy in ("uvicorn.access", "httpcore", "httpx", "openai", "anthropic", "aiosqlite",
+                  "pdfminer", "pdfplumber", "python_multipart", "multipart"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Add file handler if configured

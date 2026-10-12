@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from config import settings
-from libs.exceptions import LLMUnavailableError
+from libs.exceptions import LLMUnavailableError, LLMInsufficientBalanceError
 from services.llm.router import get_registry
 
 
@@ -37,7 +37,7 @@ async def get_llm_runtime_status(*, probe_if_needed: bool = True) -> dict[str, A
         provider_health = {name: details["healthy"] for name, details in probe_details.items()}
     elif probe_if_needed:
         provider_health = await registry.ping_all()
-        probe_details = {
+        probe_details = registry.provider_health_cached or {
             name: {"healthy": healthy, "status": "ok" if healthy else "unhealthy", "error": None}
             for name, healthy in provider_health.items()
         }
@@ -73,4 +73,8 @@ async def ensure_llm_ready(feature_name: str, *, allow_degraded: bool = False) -
     status = runtime["status"]
     if status == "ready" or (allow_degraded and status == "degraded"):
         return
+    details = runtime["provider_details"].get(runtime["primary_name"], {})
+    error = str(details.get("error") or "").lower()
+    if "insufficient balance" in error:
+        raise LLMInsufficientBalanceError()
     raise LLMUnavailableError(_status_message(feature_name, status, runtime["primary_name"]))

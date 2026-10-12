@@ -246,15 +246,21 @@ async def run_ingestion_pipeline(
     # Step 0: Content hash dedup (xxhash ~10x faster than SHA-256, ported from Crawl4AI)
     content_hash = None
     if file_bytes:
+        from services.parser.english_textbook import is_english_textbook
+        # Only English imports rebuild after this repair. Existing math,
+        # Chinese and report dedup hashes stay unchanged.
+        ingestion_version = _INGESTION_SCHEMA_VERSION
+        if is_english_textbook(filename):
+            ingestion_version += b"english-page-complete-v1\0"
         try:
             import xxhash
 
             digest = xxhash.xxh64()
-            digest.update(_INGESTION_SCHEMA_VERSION)
+            digest.update(ingestion_version)
             digest.update(file_bytes)
             content_hash = digest.hexdigest()
         except ImportError:
-            content_hash = hashlib.sha256(_INGESTION_SCHEMA_VERSION + file_bytes).hexdigest()
+            content_hash = hashlib.sha256(ingestion_version + file_bytes).hexdigest()
         # Check for duplicates
         duplicate_filters = [
             IngestionJob.content_hash == content_hash,
@@ -472,8 +478,16 @@ async def run_ingestion_pipeline(
         # especially important for Chinese PDF目录 where glyph spacing and
         # page headers otherwise hide the textbook signals.
         from services.content_text import normalize_pdf_markdown
-        extracted = normalize_pdf_markdown(extracted) or ""
+        from services.parser.english_textbook import DOCUMENT_MARKER, english_extraction_report
+        # English page coordinates and boundaries are already normalized.
+        # Math's digit-gap repair would join "UNIT 2\n3" into "UNIT 23".
+        if not extracted.startswith(DOCUMENT_MARKER):
+            extracted = normalize_pdf_markdown(extracted) or ""
         job.extracted_markdown = extracted
+
+        english_report = english_extraction_report(extracted)
+        if english_report is not None:
+            job.page_stats = english_report
 
         # Partial extraction: some PDF pages were unreadable. Record page-level
         # statistics, strip the marker, and continue with the readable pages.

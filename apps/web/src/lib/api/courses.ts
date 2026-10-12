@@ -199,6 +199,8 @@ export async function restructureNotes(
 ): Promise<RestructuredNotes> {
   return request("/notes/restructure", {
     method: "POST",
+    timeoutMs: 180_000,
+    suppressErrorToast: true,
     body: JSON.stringify({
       content_node_id: contentNodeId,
       format_override: formatOverride,

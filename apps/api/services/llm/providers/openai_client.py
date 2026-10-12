@@ -44,6 +44,7 @@ class OpenAIClient(LLMClient):
         from openai import AsyncOpenAI
 
         self.provider_name = name
+        self._trust_env = trust_env
         self._supports_stream_options = name not in self._NO_STREAM_OPTIONS
         kwargs = {"api_key": api_key}
         if base_url:
@@ -62,6 +63,28 @@ class OpenAIClient(LLMClient):
 
         Classifies errors: unreachable / auth / rate_limit / timeout / server_error.
         """
+        if self.provider_name == "deepseek":
+            # /models proves authentication, not usable generation credit.
+            # This free account probe lets a top-up recover the circuit and
+            # prevents a zero-balance account appearing healthy every cooldown.
+            try:
+                base = str(self.client.base_url).rstrip("/")
+                async with httpx.AsyncClient(timeout=5, trust_env=self._trust_env) as http:
+                    response = await http.get(f"{base}/user/balance", headers={
+                        "Authorization": f"Bearer {self.client.api_key}",
+                    })
+                if response.status_code == 200:
+                    available = response.json().get("is_available")
+                    if available is True:
+                        self.mark_healthy()
+                        return True
+                    self.mark_unhealthy("Insufficient Balance (402)" if available is False else "invalid_balance_response")
+                else:
+                    self.mark_unhealthy(f"balance_probe_status ({response.status_code})")
+                return False
+            except (httpx.HTTPError, ValueError) as error:
+                self.mark_unhealthy(f"balance_probe_failed: {type(error).__name__}")
+                return False
         if self.provider_name not in self._NO_STREAM_OPTIONS:
             return self.is_healthy  # Cloud APIs: trust cached status
         try:

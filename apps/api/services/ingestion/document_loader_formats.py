@@ -39,6 +39,13 @@ async def _extract_local_with_crawl4ai(file_path: str) -> tuple[str, str]:
     abs_path = str(Path(file_path).resolve())
     file_url = f"file://{abs_path}"
 
+    # PEP English editions include image-only books and embedded phonetic
+    # fonts. Use the same page-aware path regardless of optional Crawl4AI or
+    # Marker installation, rather than accepting partial text from either.
+    from services.parser.english_textbook import is_english_textbook, extract_english_textbook
+    if Path(file_path).suffix.lower() == ".pdf" and is_english_textbook(Path(file_path).name):
+        return await asyncio.to_thread(extract_english_textbook, file_path)
+
     try:
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 
@@ -87,6 +94,9 @@ async def _extract_local_with_crawl4ai(file_path: str) -> tuple[str, str]:
 
 def _extract_pdf_fallback(file_path: str) -> tuple[str, str]:
     """PDF fallback: Marker -> pypdf."""
+    from services.parser.english_textbook import is_english_textbook, extract_english_textbook
+    if is_english_textbook(Path(file_path).name):
+        return extract_english_textbook(file_path)
     # Guard: skip files that aren't actually PDFs (e.g. .xlsx/.zip with .pdf extension)
     # PK magic bytes (0x504B) indicate a ZIP-based Office format (docx/pptx/xlsx)
     try:

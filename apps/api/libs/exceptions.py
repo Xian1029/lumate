@@ -66,6 +66,14 @@ class LLMUnavailableError(AppError):
         super().__init__(message)
 
 
+class LLMInsufficientBalanceError(AppError):
+    code = "llm_insufficient_balance"
+    status = 402
+
+    def __init__(self, message: str = "AI 服务账户余额不足，请充值或更换有可用额度的 API Key 后重新生成笔记。"):
+        super().__init__(message)
+
+
 class KnowledgeGraphUnavailableError(AppError):
     code = "knowledge_graph_unavailable"
     status = 500

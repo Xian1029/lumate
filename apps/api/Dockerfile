@@ -20,7 +20,7 @@ WORKDIR /app
 # Runtime-only system deps (curl for healthcheck, docker CLI for sandbox,
 # gosu to drop privileges after preparing mounted data volumes)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl docker.io gosu \
+    curl docker.io gosu tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder

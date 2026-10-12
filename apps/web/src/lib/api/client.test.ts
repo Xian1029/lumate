@@ -26,6 +26,12 @@ describe("API_BASE", () => {
 });
 
 describe("parseApiError", () => {
+  it("shows an actionable balance message instead of service unavailable", async () => {
+    const err = await parseApiError(jsonResponse({ code: "llm_insufficient_balance", message: "Insufficient Balance" }, 402));
+    expect(err.message).toContain("余额不足");
+    expect(err.message).toContain("更换");
+    expect(err.message).not.toContain("服务暂时不可用");
+  });
   it("extracts detail from API error response", async () => {
     const res = jsonResponse({ detail: "Not found", code: "not_found" }, 404);
     const err = await parseApiError(res);

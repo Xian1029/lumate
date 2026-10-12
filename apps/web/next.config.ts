@@ -41,6 +41,10 @@ const nextConfig: NextConfig = {
   // boundary/field overhead) so PDF/PPTX uploads flow through intact.
   experimental: {
     proxyClientMaxBodySize: 550 * 1024 * 1024,
+    // Scanned textbooks are parsed/OCR'd by the upload endpoint. Next's
+    // default 30s proxy deadline closes the browser connection while the API
+    // is still processing, making a valid upload appear to have failed.
+    proxyTimeout: 600_000,
   },
   async headers() {
     return [

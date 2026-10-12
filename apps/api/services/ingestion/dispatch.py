@@ -134,12 +134,16 @@ async def dispatch_content(
         else:
             nodes = parsed_nodes
             if nodes is None:
+                from services.parser.english_textbook import DOCUMENT_MARKER
+                source_markdown = job.extracted_markdown
+                if not source_markdown.startswith(DOCUMENT_MARKER):
+                    source_markdown = normalize_pdf_markdown(source_markdown) or ""
                 # Defensive second boundary: older extractors and imported
                 # jobs cannot bypass the Markdown-safe text contract. Parsing
                 # is CPU work; keep it off the async API event loop.
                 nodes = await asyncio.to_thread(
                     _markdown_to_tree,
-                    markdown=normalize_pdf_markdown(job.extracted_markdown) or "",
+                    markdown=source_markdown,
                     course_id=job.course_id,
                     source_file=source_label,
                 )

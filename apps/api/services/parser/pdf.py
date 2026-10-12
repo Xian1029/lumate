@@ -263,6 +263,9 @@ def _markdown_to_tree(
     3. No-heading fallback (paragraph splitting)
     4. Bottom-up token counting + tree thinning (merge small nodes)
     """
+    from services.parser.english_textbook import DOCUMENT_MARKER, english_markdown_to_tree
+    if markdown.startswith(DOCUMENT_MARKER):
+        return english_markdown_to_tree(markdown, course_id, source_file)
     markdown = normalize_pdf_markdown(markdown) or ""
     if not markdown:
         return []
@@ -1015,6 +1018,14 @@ def assess_textbook_outline_integrity(
     least four distinct section numbers is present. This avoids rejecting notes
     and short handouts that legitimately have no formal outline.
     """
+    from services.parser.english_textbook import english_extraction_report
+    english_report = english_extraction_report(markdown)
+    if english_report is not None:
+        stored_report = (nodes[0].metadata_ or {}).get("extraction", {}) if nodes else {}
+        complete = bool(stored_report.get("primary_units")) and stored_report.get("accounted_pages") == english_report["total"]
+        return complete, {"checked": True, "coverage": stored_report.get("unit_coverage", 0),
+            "primary_units": stored_report.get("primary_units", []), "missing_sections": [],
+            "total_pages": english_report["total"], "accounted_pages": stored_report.get("accounted_pages", 0)}
     normalized = normalize_pdf_markdown(markdown) or ""
     outline_lines = [
         re.sub(r"\s+", " ", line).strip(" #\t")
@@ -1237,6 +1248,11 @@ async def parse_pdf_to_tree(
 ) -> list[CourseContentTree]:
     """Full pipeline: PDF → Marker → Markdown → content tree nodes."""
     loop = asyncio.get_event_loop()
+
+    from services.parser.english_textbook import is_english_textbook, extract_english_textbook
+    if is_english_textbook(source_file):
+        _, markdown = await asyncio.to_thread(extract_english_textbook, file_path)
+        return _markdown_to_tree(markdown, course_id, source_file)
 
     # Run Marker in a thread (it's CPU-intensive)
     markdown = await loop.run_in_executor(

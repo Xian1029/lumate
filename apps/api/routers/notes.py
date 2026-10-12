@@ -1,6 +1,7 @@
 """AI Notes restructuring endpoint."""
 
 import logging
+import asyncio
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -127,8 +128,9 @@ async def restructure_content(body: RestructureRequest, user: User = Depends(get
 
     await ensure_llm_ready("Notes restructuring")
     try:
-        ai_content = await restructure_notes(
-            node.content, node.title, note_format, visual_pref
+        ai_content = await asyncio.wait_for(
+            restructure_notes(node.content, node.title, note_format, visual_pref, allow_fallback=False),
+            timeout=150,
         )
     except (ConnectionError, TimeoutError, ValueError, KeyError, RuntimeError) as exc:
         reraise_as_app_error(exc, "Notes restructuring failed")

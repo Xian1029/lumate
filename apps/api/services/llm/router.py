@@ -132,15 +132,8 @@ class ProviderRegistry:
 
     async def ping_all(self) -> dict[str, bool]:
         """Actively probe all providers and return live health status."""
-        import asyncio
-        results = await asyncio.gather(
-            *(client.ping() for client in self._providers.values()),
-            return_exceptions=True,
-        )
-        return {
-            name: (r is True)
-            for (name, _), r in zip(self._providers.items(), results)
-        }
+        await self._refresh_probe_cache()
+        return {name: details["healthy"] for name, details in self._probe_cache.items()}
 
     # ── Background health monitor (OpenClaw pattern) ──────────
 
