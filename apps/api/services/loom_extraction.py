@@ -33,6 +33,10 @@ _BLOOM_LEVELS = {
 }
 
 FUSION_SIMILARITY_THRESHOLD = 0.85  # Graphusion: merge concepts above this cosine similarity
+# Keep ingestion responsive for very large textbooks without silently limiting
+# semantic extraction to the first pages of a material.
+MAX_EXTRACTION_CHUNKS = 24
+DEFAULT_MAX_CONCEPT_NODES = 48
 
 _EXTRACT_PROMPT = """Analyze this educational content and extract the key concepts being taught.
 
@@ -96,6 +100,17 @@ async def _extract_from_chunk(client, title: str, content: str) -> list[dict]:
     except (ConnectionError, TimeoutError, RuntimeError) as e:
         logger.warning("Chunk extraction LLM call failed for '%s': %s", title, e)
         return []
+
+
+def _select_extraction_chunks(content_nodes: list, limit: int = MAX_EXTRACTION_CHUNKS) -> list:
+    """Select chunks across a whole material instead of only its first pages."""
+    if len(content_nodes) <= limit:
+        return content_nodes
+    positions = {
+        round(index * (len(content_nodes) - 1) / (limit - 1))
+        for index in range(limit)
+    }
+    return [node for index, node in enumerate(content_nodes) if index in positions]
 
 
 # ── Graphusion Fusion/Dedup ──
@@ -242,7 +257,7 @@ async def _fuse_concepts(concepts: list[dict]) -> list[dict]:
 async def extract_course_concepts(
     db: AsyncSession,
     course_id: uuid.UUID,
-    max_nodes: int = 10,
+    max_nodes: int = DEFAULT_MAX_CONCEPT_NODES,
 ) -> list[KnowledgeNode]:
     """Extract concept nodes from course content via LLM.
 
@@ -290,7 +305,8 @@ async def extract_course_concepts(
         return []
 
     all_concepts: list[dict] = []
-    for content_node in eligible[:5]:
+    extraction_chunks = _select_extraction_chunks(eligible)
+    for content_node in extraction_chunks:
         chunk_concepts = await _extract_from_chunk(
             client, content_node.title, content_node.content,
         )
@@ -299,7 +315,7 @@ async def extract_course_concepts(
     if not all_concepts:
         # Fallback: try combined extraction (original approach)
         combined = "\n\n---\n\n".join(
-            f"## {n.title}\n{n.content[:1500]}" for n in eligible[:5]
+            f"## {n.title}\n{n.content[:1500]}" for n in extraction_chunks
         )
         all_concepts = await _extract_from_chunk(client, eligible[0].title, combined)
 

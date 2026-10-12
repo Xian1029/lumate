@@ -40,6 +40,18 @@ def _color_from_status(status: str) -> str:
 
 _DISPLAY_SECTION_PREFIX = re.compile(r"^\s*(?:\d+(?:[.．]\d+)+[、.．:：\s-]*|第[一二三四五六七八九十百\d]+[章节][、.．:：\s-]*)")
 
+# A prerequisite must be supported by the source, not guessed from any two
+# adjacent paragraphs. These are the structural labels used by textbooks for
+# an explicitly ordered curriculum.
+_FORMAL_CURRICULUM_LABEL = re.compile(
+    r"^\s*(?:"
+    r"\d+(?:[.．]\d+)*(?:[、.．:：\s-]+|$)"
+    r"|第[一二三四五六七八九十百\d]+(?:章|节|单元)(?:[、.．:：\s-]+|$)"
+    r"|(?:chapter|unit|lesson|module)\s*\d+(?:[.．]\d+)*(?:\b|[.:：\s-])"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _concept_display_label(title: str) -> str:
     """Keep source titles intact while removing outline numbering in the map."""
@@ -129,6 +141,32 @@ def _ordered_content_nodes(nodes: list[CourseContentTree]) -> list[CourseContent
     seen = {node.id for node in ordered}
     ordered.extend(node for node in nodes if node.id not in seen)
     return ordered
+
+
+def _structural_prerequisite_pairs(
+    learnable_nodes: list[CourseContentTree],
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """Return source-proven prerequisite pairs as ``(later, earlier)``.
+
+    This deterministic safety net works when semantic extraction is partial or
+    its LLM is unavailable. It only infers a dependency between adjacent
+    sibling lessons with explicit curriculum numbering (for example ``1.2``
+    after ``1.1``); ordinary document order is never treated as a prerequisite.
+    """
+    by_parent: dict[uuid.UUID | None, list[CourseContentTree]] = {}
+    for node in learnable_nodes:
+        by_parent.setdefault(node.parent_id, []).append(node)
+
+    pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
+    for siblings in by_parent.values():
+        ordered = sorted(
+            siblings,
+            key=lambda item: (getattr(item, "order_index", 0) or 0, item.title.casefold(), str(item.id)),
+        )
+        if len(ordered) < 2 or not all(_FORMAL_CURRICULUM_LABEL.match(item.title or "") for item in ordered):
+            continue
+        pairs.extend((later.id, earlier.id) for earlier, later in zip(ordered, ordered[1:]))
+    return pairs
 
 
 def _status_from_learning_progress(progress: LearningProgress | None) -> tuple[str, float]:
@@ -332,11 +370,9 @@ async def build_knowledge_graph(
             }
         )
 
-    # Preserve source-backed context only. `contains` is a real hierarchy;
-    # `curriculum_sequence` means printed learning order, explicitly *not* a
-    # prerequisite. This connects every fallback unit without inventing
-    # cognitive dependencies where the uploaded material has not established
-    # them yet.
+    # Preserve source-backed context only. Where a source has formal adjacent
+    # lesson numbering, its order is an auditable curriculum prerequisite.
+    # All other source order remains a plain ``curriculum_sequence``.
     existing_edges = {(edge["source"], edge["target"], edge["type"]) for edge in edges}
     for content_node in ordered_learnable_nodes:
         if content_node.parent_id is None:
@@ -350,18 +386,32 @@ async def build_knowledge_graph(
             edges.append({"source": source, "target": target, "type": "contains"})
             existing_edges.add(key)
 
-    prior_by_material: dict[str, str] = {}
+    structural_prerequisites = _structural_prerequisite_pairs(ordered_learnable_nodes)
+    structural_prerequisite_ids = set(structural_prerequisites)
+    for later_content_id, earlier_content_id in structural_prerequisites:
+        source = visual_id_by_content.get(later_content_id)
+        target = visual_id_by_content.get(earlier_content_id)
+        if source is None or target is None or source == target:
+            continue
+        key = (source, target, "prerequisite")
+        if key not in existing_edges:
+            edges.append({"source": source, "target": target, "type": "prerequisite"})
+            existing_edges.add(key)
+
+    prior_by_material: dict[str, CourseContentTree] = {}
     for content_node in ordered_learnable_nodes:
         material_id = material_key_for_content(content_node.id) or getattr(content_node, "source_file", None) or "未分类资料"
         target = visual_id_by_content.get(content_node.id)
-        source = prior_by_material.get(material_id)
-        if source and target and source != target:
+        prior_node = prior_by_material.get(material_id)
+        source = visual_id_by_content.get(prior_node.id) if prior_node else None
+        is_structural_pair = bool(prior_node and (content_node.id, prior_node.id) in structural_prerequisite_ids)
+        if source and target and source != target and not is_structural_pair:
             key = (source, target, "curriculum_sequence")
             if key not in existing_edges:
                 edges.append({"source": source, "target": target, "type": "curriculum_sequence"})
                 existing_edges.add(key)
         if target:
-            prior_by_material[material_id] = target
+            prior_by_material[material_id] = content_node
 
     edges = _normalize_relationship_edges(edges)
 
