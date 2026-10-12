@@ -103,6 +103,7 @@ async def get_smart_review_session(
     prereqs_of: dict[uuid.UUID, list[uuid.UUID]] = {}  # concept → its prerequisites
     related_to: dict[uuid.UUID, list[uuid.UUID]] = {}
     confused_with: dict[uuid.UUID, list[uuid.UUID]] = {}
+    max_confusion_weight_by_source: dict[uuid.UUID, float] = {}
 
     for edge in edges:
         if edge.relation_type == "prerequisite":
@@ -111,6 +112,10 @@ async def get_smart_review_session(
             related_to.setdefault(edge.source_id, []).append(edge.target_id)
         elif edge.relation_type == "confused_with":
             confused_with.setdefault(edge.source_id, []).append(edge.target_id)
+            max_confusion_weight_by_source[edge.source_id] = max(
+                max_confusion_weight_by_source.get(edge.source_id, 0.0),
+                edge.weight or 0.0,
+            )
 
     # Score each concept
     now = datetime.now(timezone.utc)
@@ -180,13 +185,11 @@ async def get_smart_review_session(
         # Boost priority for concepts with high-weight confused_with edges,
         # regardless of whether the confused concept has low mastery.
         # This catches potential confusion BEFORE the student makes a mistake.
-        max_interference = 0.0
-        for confused_id in confused_with.get(node.id, []):
-            for edge in edges:
-                if (edge.source_id == node.id and edge.target_id == confused_id
-                        and edge.relation_type == "confused_with"
-                        and edge.weight > max_interference):
-                    max_interference = edge.weight
+        # Previously every concept scanned every confused_with edge again,
+        # making review generation O(concepts × edges) on large textbook
+        # graphs. The source maximum is enough for this score and is computed
+        # once above, reducing this part to O(concepts + edges).
+        max_interference = max_confusion_weight_by_source.get(node.id, 0.0)
         if max_interference > 0.6:
             interference_boost = max_interference * settings.lector_factor_interference
             priority += interference_boost
@@ -244,7 +247,6 @@ async def get_smart_review_session(
             days_elapsed = (now - mastery.last_practiced_at).total_seconds() / 86400
             item_retrievability = fsrs_retrievability(days_elapsed, item_stability)
 
-        matched_content = select_best_content_node(node.name, curriculum_nodes)
         stored_content = (
             curriculum_nodes_by_id.get(str(node.content_node_id))
             if getattr(node, "content_node_id", None)
@@ -267,15 +269,22 @@ async def get_smart_review_session(
             retrievability=round(item_retrievability, 3),
             last_practiced_at=mastery.last_practiced_at.isoformat() if mastery and mastery.last_practiced_at else None,
             content_node_id=(
-                str((matched_content or fallback_content).id)
-                if matched_content or fallback_content
+                str(fallback_content.id)
+                if fallback_content
                 else None
             ),
         ))
 
-    # Sort by priority (highest first) and take top N
+    # Link only the items that will actually be returned. Matching every
+    # concept against every curriculum node made the homepage review queue
+    # quadratic for large textbooks, even though it displays at most 10.
     scored_items.sort(key=lambda x: x.priority, reverse=True)
-    return scored_items[:max_items]
+    selected_items = scored_items[:max_items]
+    for item in selected_items:
+        matched_content = select_best_content_node(item.concept_name, curriculum_nodes)
+        if matched_content is not None:
+            item.content_node_id = str(matched_content.id)
+    return selected_items
 
 
 async def get_review_summary(

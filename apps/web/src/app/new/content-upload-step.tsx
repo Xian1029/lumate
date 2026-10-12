@@ -94,6 +94,9 @@ export function ContentUploadStep({
     return t("new.mode.upload");
   }
 
+  const fallbackDestination = files[0]?.name.replace(/\.[^.]+$/, "").trim() || "综合学习资料";
+  const destinationLabel = projectName.trim() || fallbackDestination;
+
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-7 p-4 animate-in fade-in duration-300 sm:p-8 lg:p-12">
       {/* Top nav */}
@@ -152,9 +155,9 @@ export function ContentUploadStep({
       {/* Multi-subject split preview */}
       {uploadPlan && (uploadPlan.groups.length > 1 || uploadPlan.unclassified.length > 0) && (
         <div className="flex flex-col gap-3 rounded-xl border border-brand/30 bg-brand-muted/20 p-4">
-          <h3 className="text-sm font-semibold text-foreground">检测到 {uploadPlan.groups.length} 个学科分组</h3>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={onCombineAll} className="rounded-md border border-brand/40 bg-background px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand-muted">全部放入同一学习空间</button><button type="button" onClick={onResetGrouping} className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">恢复自动分组</button></div>
-          {files.length > 0 && files.every((file) => fileAssignments[file.name] === "__all__") && <p className="rounded-lg bg-brand-muted/40 px-3 py-2 text-xs text-brand">已选择合并：所有资料会进入同一个学习空间，不再按学科拆分。</p>}
+          <h3 className="text-sm font-semibold text-foreground">{uploadPlan.groups.length > 0 ? `检测到 ${uploadPlan.groups.length} 个学科分组` : "暂未识别出明确学科"}</h3>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={onCombineAll} className="rounded-md border border-brand/40 bg-background px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand-muted">全部放入新建空间「{destinationLabel}」</button><button type="button" onClick={onResetGrouping} className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted">恢复自动分组</button></div>
+          {files.length > 0 && files.every((file) => fileAssignments[file.name] === "__all__") && <p className="rounded-lg bg-brand-muted/40 px-3 py-2 text-xs text-brand">已选择合并：全部资料将进入新建学习空间「{destinationLabel}」，不会混入已有学习空间。</p>}
           <div className="space-y-2">
             {uploadPlan.groups.map((group) => (
               <div key={group.key} className="rounded-lg bg-card px-3 py-2">
@@ -168,7 +171,7 @@ export function ContentUploadStep({
           </div>
           {uploadPlan.unclassified.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
-              <p className="text-xs font-medium text-amber-800">以下资料无法可靠识别，需由你确认后才能继续；系统不会自动混入其他学科。</p>
+              <p className="text-xs font-medium text-amber-800">以下资料暂时无法可靠识别学科。你可以直接合并到新建空间「{destinationLabel}」，或手动选择归属；系统不会自动混入已有学科空间。</p>
               {uploadPlan.unclassified.map((file) => (
                 <label key={file.filename} className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs text-foreground">
                   <span className="truncate">{file.filename}</span>

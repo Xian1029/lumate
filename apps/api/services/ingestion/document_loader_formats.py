@@ -13,6 +13,7 @@ Extracted from document_loader.py.
 
 import csv
 import logging
+import re
 from pathlib import Path
 
 from services.content_text import normalize_pdf_markdown
@@ -344,11 +345,21 @@ def _extract_docx_fallback(file_path: str) -> tuple[str, str]:
         doc = Document(file_path)
         parts: list[str] = []
 
-        # Extract paragraphs
+        # Preserve Word heading styles as Markdown headings.  Without this,
+        # DOCX files lose their semantic structure and the downstream tree
+        # builder sees one long wall of text.  Body paragraphs remain plain
+        # text, so existing maths/English extraction is unchanged.
         for para in doc.paragraphs:
             text = para.text.strip()
             if text:
-                parts.append(text)
+                style_name = str(getattr(getattr(para, "style", None), "name", "") or "")
+                heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name, re.IGNORECASE)
+                if heading_match:
+                    parts.append(f"{'#' * int(heading_match.group(1))} {text}")
+                elif style_name.lower() in {"title", "subtitle"}:
+                    parts.append(f"# {text}")
+                else:
+                    parts.append(text)
 
         # Extract tables as markdown
         for table in doc.tables:

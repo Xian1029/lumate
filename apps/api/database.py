@@ -9,7 +9,6 @@ import time
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import StaticPool
 
 from config import settings
 
@@ -19,8 +18,16 @@ _is_sqlite = settings.database_url.startswith("sqlite")
 
 _engine_kwargs: dict = {"echo": False}
 if _is_sqlite:
-    _engine_kwargs["poolclass"] = StaticPool
-    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+    # File-backed SQLite must use SQLAlchemy's async queue pool (the default
+    # for aiosqlite). StaticPool hands every AsyncSession the same physical
+    # connection: overlapping requests can then interleave BEGIN/SAVEPOINT
+    # state, producing "no such savepoint" and sporadic database_error 503s.
+    # The WAL pragma below permits concurrent readers while SQLite serializes
+    # writers across independent connections.
+    _engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 15}
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 5
+    _engine_kwargs["pool_timeout"] = 30
 else:
     _engine_kwargs["pool_size"] = 10
     _engine_kwargs["max_overflow"] = 20
@@ -37,7 +44,7 @@ if _is_sqlite:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=15000")
         cursor.execute("PRAGMA cache_size=-64000")  # 64MB
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()

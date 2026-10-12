@@ -9,9 +9,20 @@ function sanitizeMindmapLabel(rawLabel: string): string {
   label = label.replace(/^[-*+]\s+/, "");
   label = label.replace(/^:+\s*/, "");
   label = label.replace(/`([^`]*)`/g, "$1");
-  label = label.replace(/["'`{}[\]<>]/g, " ");
-  label = label.replace(/[()]/g, " ");
-  label = label.replace(/[:;,]/g, " ");
+  // Mermaid uses brackets and parentheses as shape delimiters. Convert only
+  // those structural characters to their full-width counterparts; ordinary
+  // punctuation (apostrophes, colons, commas, semicolons, question marks)
+  // is part of the learner-facing label and must never be discarded.
+  label = label.replace(/["{}[\]<>]/g, (character) => ({
+    '"': "＂",
+    "{": "｛",
+    "}": "｝",
+    "[": "［",
+    "]": "］",
+    "<": "＜",
+    ">": "＞",
+  })[character] ?? character);
+  label = label.replace(/[()]/g, (character) => character === "(" ? "（" : "）");
   label = label.replace(/\s+/g, " ").trim();
   return label;
 }

@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 import uuid
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -126,6 +126,40 @@ async def _plan_summary(db: AsyncSession, plan: LearningPlan) -> dict:
     completed = sum(1 for status, _, _ in rows if status == LearningTaskStatus.COMPLETED.value)
     remaining_minutes = sum(minutes or 0 for status, minutes, _ in rows if status != LearningTaskStatus.COMPLETED.value)
     return {"plan": _plan_response(plan), "task_count": total, "completed_task_count": completed, "remaining_minutes": remaining_minutes}
+
+
+async def _plan_summary_map(db: AsyncSession, plans: list[LearningPlan]) -> dict[uuid.UUID, dict]:
+    """Build plan summaries in one grouped query instead of one query per plan."""
+    if not plans:
+        return {}
+    rows = (await db.execute(
+        select(
+            LearningTask.plan_id,
+            func.count(LearningTask.id),
+            func.sum(case((LearningTask.status == LearningTaskStatus.COMPLETED.value, 1), else_=0)),
+            func.sum(case(
+                (LearningTask.status != LearningTaskStatus.COMPLETED.value,
+                 func.coalesce(LearningTask.estimated_minutes, 0)),
+                else_=0,
+            )),
+        )
+        .where(LearningTask.plan_id.in_([plan.id for plan in plans]))
+        .group_by(LearningTask.plan_id)
+    )).all()
+    totals = {
+        plan_id: (int(task_count or 0), int(completed_count or 0), int(remaining_minutes or 0))
+        for plan_id, task_count, completed_count, remaining_minutes in rows
+    }
+    summaries: dict[uuid.UUID, dict] = {}
+    for plan in plans:
+        task_count, completed_count, remaining_minutes = totals.get(plan.id, (0, 0, 0))
+        summaries[plan.id] = {
+            "plan": _plan_response(plan),
+            "task_count": task_count,
+            "completed_task_count": completed_count,
+            "remaining_minutes": remaining_minutes,
+        }
+    return summaries
 
 
 def _workspace_progress_view_model(
@@ -264,9 +298,10 @@ def _workspace_progress_view_model(
 @router.get("/", response_model=dict)
 async def learning_plan_dashboard(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     plans = list((await db.execute(select(LearningPlan).where(LearningPlan.user_id == user.id).order_by(LearningPlan.updated_at.desc()))).scalars().all())
-    drafts = [await _plan_summary(db, plan) for plan in plans if plan.status in {LearningPlanStatus.DRAFT.value, LearningPlanStatus.CHANGES_REQUESTED.value}]
-    pending = [await _plan_summary(db, plan) for plan in plans if plan.status == LearningPlanStatus.PENDING_APPROVAL.value]
-    active = [await _plan_summary(db, plan) for plan in plans if plan.status in {LearningPlanStatus.ACTIVE.value, LearningPlanStatus.PAUSED.value}]
+    summaries = await _plan_summary_map(db, plans)
+    drafts = [summaries[plan.id] for plan in plans if plan.status in {LearningPlanStatus.DRAFT.value, LearningPlanStatus.CHANGES_REQUESTED.value}]
+    pending = [summaries[plan.id] for plan in plans if plan.status == LearningPlanStatus.PENDING_APPROVAL.value]
+    active = [summaries[plan.id] for plan in plans if plan.status in {LearningPlanStatus.ACTIVE.value, LearningPlanStatus.PAUSED.value}]
     current_tasks = await _tasks_for_active_plans(db, user.id)
     return {
         "draft_plans": drafts,
@@ -291,8 +326,9 @@ async def learning_home_overview(user: User = Depends(get_current_user), db: Asy
     plans = list((await db.execute(
         select(LearningPlan).where(LearningPlan.user_id == user.id).order_by(LearningPlan.updated_at.desc())
     )).scalars().all())
-    draft_plans = [await _plan_summary(db, plan) for plan in plans if plan.status in {LearningPlanStatus.DRAFT.value, LearningPlanStatus.CHANGES_REQUESTED.value}]
-    pending_plans = [await _plan_summary(db, plan) for plan in plans if plan.status == LearningPlanStatus.PENDING_APPROVAL.value]
+    plan_summaries = await _plan_summary_map(db, plans)
+    draft_plans = [plan_summaries[plan.id] for plan in plans if plan.status in {LearningPlanStatus.DRAFT.value, LearningPlanStatus.CHANGES_REQUESTED.value}]
+    pending_plans = [plan_summaries[plan.id] for plan in plans if plan.status == LearningPlanStatus.PENDING_APPROVAL.value]
     active_tasks = await _tasks_for_active_plans(db, user.id)
 
     today = datetime.now(timezone.utc).date()

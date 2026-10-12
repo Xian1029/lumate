@@ -212,7 +212,11 @@ export async function request<T>(path: string, options?: ApiRequestOptions): Pro
 
   let lastError: Error | undefined;
 
-  const maxRetries = retry ? MAX_RETRIES : 0;
+  // Reads are safe to retry. Mutations fail fast so a slow/failed click does
+  // not wait through several backoff rounds or accidentally duplicate a write.
+  const requestMethod = String(fetchOptions.method || "GET").toUpperCase();
+  const isReadRequest = requestMethod === "GET" || requestMethod === "HEAD";
+  const maxRetries = retry && isReadRequest ? MAX_RETRIES : 0;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -245,7 +249,7 @@ export async function request<T>(path: string, options?: ApiRequestOptions): Pro
     } catch (err) {
       clearTimeout(timeoutId);
       // Abort errors are retryable (request timed out)
-      if (err instanceof DOMException && err.name === "AbortError" && attempt < MAX_RETRIES) {
+      if (err instanceof DOMException && err.name === "AbortError" && attempt < maxRetries) {
         lastError = new TypeError(t("ui.request_timeout"));
         await new Promise((r) => setTimeout(r, retryDelay(attempt)));
         continue;

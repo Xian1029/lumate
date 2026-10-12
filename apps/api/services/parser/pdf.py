@@ -107,6 +107,7 @@ def _has_headings_code_aware(markdown: str) -> bool:
 
 _NUMBERED_TOPIC_LINE = re.compile(
     r"^\s*(?:第\s*[一二三四五六七八九十百千万\d０-９]+\s*[章节篇部分]|"
+    r"[一二三四五六七八九十百千万]+\s*[.．、)、）:]?\s*|"
     r"[０-９\d]+(?:\s*[.．、)、）]\s*[０-９\d]*)?\s+)[^。！？!?；;]{2,60}$"
 )
 _TOPIC_PUNCTUATION = re.compile(r"[。！？!?；;：:]$")
@@ -116,6 +117,19 @@ def _looks_like_topic_line(line: str) -> bool:
     """Return whether a line is likely a semantic title, not body prose."""
     candidate = re.sub(r"\s+", " ", line).strip(" #\t")
     if not candidate or len(candidate) < 3 or len(candidate) > 70:
+        return False
+    # Links, Markdown table rows and separators are source formatting, not
+    # learning topics.  Treating them as headings creates directory entries
+    # such as ``https://…`` and ``| 维度 | 介绍 |``.
+    if (
+        candidate.startswith(("|", "http://", "https://", "www."))
+        or "://" in candidate
+        or re.fullmatch(r"[-_=~|·•\s]+", candidate)
+        or re.match(
+            r"^(?:数据来源|来源|作者|调研时间|研究时间|报告时间|更新时间|日期|版本|调研性质)\s*[：:]",
+            candidate,
+        )
+    ):
         return False
     if candidate.startswith(("- ", "* ", "• ", "· ")) or _TOPIC_PUNCTUATION.search(candidate):
         return False
@@ -164,6 +178,10 @@ def _split_into_paragraphs(text: str, max_tokens: int = 420, *, semantic: bool =
         return chunks
     lines = normalized.split("\n")
     has_topic_lines = any(_looks_like_topic_line(line) for line in lines)
+    has_structured_topics = any(
+        _NUMBERED_TOPIC_LINE.match(re.sub(r"\s+", " ", line).strip(" #\t"))
+        for line in lines
+    )
     sections: list[dict] = []
 
     if has_topic_lines:
@@ -174,8 +192,13 @@ def _split_into_paragraphs(text: str, max_tokens: int = 420, *, semantic: bool =
             nonlocal current_title, current_lines
             body = "\n".join(current_lines).strip()
             if body:
+                # Keep front matter readable without promoting its first
+                # sentence (often a date or source note) to a fake chapter.
+                preamble = current_title is None and not sections
                 sections.append({
-                    "title": _sanitize_title(current_title or _title_from_content(body, len(sections) + 1)),
+                    "title": _sanitize_title(
+                        "资料概览" if preamble else current_title or _title_from_content(body, len(sections) + 1)
+                    ),
                     "text": body,
                     "level": 1,
                 })
@@ -184,7 +207,14 @@ def _split_into_paragraphs(text: str, max_tokens: int = 420, *, semantic: bool =
 
         for line in lines:
             candidate = re.sub(r"\s+", " ", line).strip(" #\t")
-            if _looks_like_topic_line(candidate):
+            is_topic = _looks_like_topic_line(candidate)
+            # In reports with numbered sections, the opening subtitle and
+            # source notes often look like short standalone lines. Keep those
+            # as front matter until the first numbered section instead of
+            # exposing them as fake directory entries.
+            if is_topic and has_structured_topics and not sections and current_title is None:
+                is_topic = bool(_NUMBERED_TOPIC_LINE.match(candidate))
+            if is_topic:
                 flush()
                 current_title = candidate
             elif candidate:
@@ -237,6 +267,22 @@ def _markdown_to_tree(
     if not markdown:
         return []
 
+    # Image-only English textbooks use a generated fallback heading.  The
+    # extractor's temporary path may contain an internal hash, which must
+    # never leak into the learner-facing directory.  Keep this correction
+    # strictly English-scoped; all other subjects retain their source text.
+    if (
+        re.search(r"(?:英语|english)", source_file, re.IGNORECASE)
+        and "这是一份扫描版教材" in markdown
+    ):
+        display_name = re.sub(r"\.pdf$", "", source_file, flags=re.IGNORECASE)
+        markdown = re.sub(
+            r"(?m)^#\s+[^\n]+$",
+            f"# {display_name}",
+            markdown,
+            count=1,
+        )
+
     lines = markdown.split("\n")
 
     # Step 1: Quick heading check (early exit, avoids full scan)
@@ -244,7 +290,12 @@ def _markdown_to_tree(
         # Preserve the dedicated textbook-outline recovery path when a formal
         # contents block exists; semantic fallback is for genuinely unheaded
         # material only.
-        has_formal_contents = _find_textbook_body_start(markdown.splitlines())[0] is not None
+        # A literal “目录” line is only a hint.  If no repeated chapter/unit
+        # boundary can be located, treating every blank paragraph as a
+        # directory entry is worse than using semantic topic detection (it
+        # turns report prose, links and table rows into sibling chapters).
+        _toc_index, body_start = _find_textbook_body_start(markdown.splitlines())
+        has_formal_contents = body_start is not None
         nodes = _build_tree_from_paragraphs(
             markdown, course_id, source_file, semantic=not has_formal_contents,
         )
@@ -360,6 +411,77 @@ _LESSON_LINE = re.compile(
 _TEXTBOOK_SECTION_LINE = re.compile(
     r"^(写作|综合性学习|名著导读|课外古诗词诵读|口语交际|语文园地|活动探究)\s*(.*)$"
 )
+_ENGLISH_UNIT_LINE = re.compile(
+    r"^(?P<prefix>starter\s+)?unit\s+(?P<number>\d{1,2})(?:\s+(?P<detail>.{1,90}))?$",
+    re.IGNORECASE,
+)
+_ENGLISH_SECTION_LINE = re.compile(
+    r"^(?:section\s+[a-c](?:\s*[,，:].*)?|grammar\s+focus|reading|writing|self\s+check|project|pronunciation|revision|review)\b.*$",
+    re.IGNORECASE,
+)
+_ENGLISH_PAGE_NOISE = re.compile(
+    r"^(?:page\s*[a-z]?\d*|p\.?\s*[a-z]?\d+|pb|notes?\s+on\s+the\s+text|words\s+and\s+expressions\s+in\s+each\s+unit|\d{1,3})$",
+    re.IGNORECASE,
+)
+
+_ENGLISH_OCR_REPAIRS = {
+    "Y es": "Yes",
+    "Y ou": "You",
+    "Y our": "Your",
+    "Y ours": "Yours",
+    "T om": "Tom",
+    "T ao": "Tao",
+    "T eacher": "Teacher",
+    "T oday": "Today",
+    "P .E.": "P.E.",
+    "let ’s": "let’s",
+}
+
+
+def _normalize_english_text(line: str) -> str:
+    """Repair common PEP PDF text-layer artefacts without touching other subjects."""
+    # OCR often inserts a space after a single glyph in names/words. Keep this
+    # deliberately allow-listed so normal phrases such as ``A map`` stay put.
+    for broken, repaired in _ENGLISH_OCR_REPAIRS.items():
+        line = line.replace(broken, repaired)
+    return re.sub(r"\s+([’'])\s*", r"\1", line)
+
+
+def _english_section_display_title(title: str) -> str:
+    """Turn PEP's terse English section markers into learner-facing labels."""
+    match = re.match(r"^section\s+([ab])\s*[,，:]?\s*(.*)$", title, re.IGNORECASE)
+    if not match:
+        replacements = {
+            "grammar focus": "语法聚焦",
+            "reading": "阅读理解",
+            "writing": "写作练习",
+            "self check": "自我检测",
+            "project": "综合实践",
+            "pronunciation": "语音练习",
+            "revision": "单元复习",
+            "review": "单元复习",
+        }
+        return replacements.get(title.strip().lower(), title)
+    label = "基础对话与练习" if match.group(1).lower() == "a" else "综合练习与表达"
+    detail = match.group(2).strip()
+    return f"{label} · {detail}" if detail else label
+
+
+def _merge_english_word_fragments(lines: list[str]) -> list[str]:
+    """Join line-wrapped English words (``Good mor`` + ``ning!``)."""
+    merged: list[str] = []
+    for raw in lines:
+        line = re.sub(r"\s+", " ", raw).strip(" #\t")
+        if (
+            merged
+            and len(merged[-1].rsplit(" ", 1)[-1]) >= 2
+            and re.search(r"[A-Za-z]$", merged[-1])
+            and re.match(r"^[a-z]", line)
+        ):
+            merged[-1] += line
+        else:
+            merged.append(line)
+    return merged
 # Some publisher PDFs put an individual text span around every glyph, so
 # ``26.1`` arrives as ``２６ ． １``. Permit whitespace *inside* each part of
 # a section number without relaxing the title matching for ordinary prose.
@@ -420,8 +542,16 @@ def _find_textbook_body_start(lines: list[str]) -> tuple[int | None, int | None]
     relying on parser chunks prevents the contents tree being treated as course
     content (and prevents duplicate chapters).
     """
+    # Only an isolated heading is a formal contents marker.  Searching for
+    # the word anywhere in a sentence misclassified ordinary notes such as
+    # “服务与产品目录补充” as a textbook TOC, which forced the conservative
+    # paragraph splitter and exposed long body sentences as directory titles.
     toc_index = next(
-        (index for index, line in enumerate(lines) if re.search(r"目\s*录", line)),
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.fullmatch(r"\s*(?:#{1,6}\s*)?目\s*录\s*[：:]?\s*", line)
+        ),
         None,
     )
     if toc_index is None:
@@ -476,18 +606,11 @@ def _restructure_unit_textbook_nodes(
         level=0, order_index=0, source_file=source_file, source_type="pdf",
     )
     rebuilt = [root]
-    front_text = "\n".join(lines[:body_start]).strip()
-    if front_text:
-        rebuilt.append(CourseContentTree(
-            id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
-            title="前言与目录", level=1, order_index=1, content=front_text,
-            source_file=source_file, source_type="pdf", content_category="reference",
-        ))
 
     unit: CourseContentTree | None = None
     unit_key: str | None = None
     section: CourseContentTree | None = None
-    unit_order = 1 if front_text else 0
+    unit_order = 0
     section_order = 0
     seen_lessons: dict[tuple[str, str], CourseContentTree] = {}
     seen_sections: dict[tuple[str, str], CourseContentTree] = {}
@@ -596,6 +719,149 @@ def _restructure_unit_textbook_nodes(
     return rebuilt
 
 
+def _english_textbook_body_start(lines: list[str]) -> int | None:
+    """Find the readable English textbook body instead of the PDF TOC noise.
+
+    People’s Education Press PDFs often contain several copies of the unit
+    list (front TOC, page headers, teacher notes, vocabulary index).  The
+    first copy is not the lesson body.  Score each unit marker by the amount
+    of Chinese/English prose and nearby unit markers so we select the notes or
+    lesson section with actual source content.
+    """
+    candidates = [i for i, line in enumerate(lines) if _ENGLISH_UNIT_LINE.match(line)]
+    if not candidates:
+        return None
+    best: tuple[float, int] | None = None
+    for index in candidates:
+        sample = lines[index:index + 700]
+        unit_count = sum(1 for line in sample if _ENGLISH_UNIT_LINE.match(line))
+        cjk_count = sum(len(re.findall(r"[\u3400-\u9fff]", line)) for line in sample)
+        prose_count = sum(1 for line in sample if len(line) >= 18 and not _ENGLISH_PAGE_NOISE.match(line))
+        previous = " ".join(lines[max(0, index - 18):index]).lower()
+        score = unit_count * 12 + min(cjk_count, 180) + min(prose_count, 80)
+        if "notes on the text" in previous:
+            score += 160
+        if unit_count < 3:
+            score -= 200
+        candidate = (score, index)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best[1] if best else None
+
+
+def _restructure_english_textbook_nodes(
+    lines: list[str], body_start: int, course_id: uuid.UUID, source_file: str,
+) -> list[CourseContentTree]:
+    """Build a compact, readable Unit → Section tree for English textbooks."""
+    root = CourseContentTree(
+        id=uuid.uuid4(), course_id=course_id, parent_id=None, title=source_file,
+        level=0, order_index=0, source_file=source_file, source_type="pdf",
+    )
+    rebuilt = [root]
+    units: dict[tuple[str, str], CourseContentTree] = {}
+    current_unit: CourseContentTree | None = None
+    current_section: CourseContentTree | None = None
+    section_keys: set[tuple[str, str]] = set()
+    unit_order = 0
+    section_order = 0
+
+    def append(target: CourseContentTree | None, line: str) -> None:
+        if target is None or not line:
+            return
+        target.content = clean_course_text(f"{target.content or ''}\n{line}")
+
+    normalized_lines = [
+        _normalize_english_text(line)
+        for line in _merge_english_word_fragments(lines[body_start:])
+    ]
+    for position, line in enumerate(normalized_lines):
+        if not line or _ENGLISH_PAGE_NOISE.match(line):
+            continue
+        if (
+            line.lower().startswith("words and expressions in each unit")
+            and len(units) >= 3
+        ):
+            # The vocabulary index repeats every unit and is not lesson body.
+            # Stop before it gets appended to the final unit.
+            break
+        line = _normalize_english_text(
+            re.sub(r"^(?:/[A-Za-z0-9]+)+", "", line).strip()
+        )
+        unit_match = _ENGLISH_UNIT_LINE.match(line)
+        if unit_match:
+            prefix = "Starter Unit" if unit_match.group("prefix") else "Unit"
+            number = unit_match.group("number")
+            key = (prefix.lower(), number)
+            current_unit = units.get(key)
+            if current_unit is None:
+                unit_order += 1
+                detail = (unit_match.group("detail") or "").strip(" .:：")
+                # The title is commonly placed on the following extracted
+                # line (e.g. ``Unit 1`` then ``My name's Gina.``).
+                if not detail:
+                    lookahead_lines = normalized_lines[position + 1:position + 5]
+                    for lookahead_index, lookahead in enumerate(lookahead_lines):
+                        if (
+                            lookahead
+                            and not _ENGLISH_PAGE_NOISE.match(lookahead)
+                            and not _ENGLISH_UNIT_LINE.match(lookahead)
+                            and not _ENGLISH_SECTION_LINE.match(lookahead)
+                            and len(lookahead) <= 90
+                        ):
+                            detail = lookahead.strip(" .:：")
+                            # PDF text boxes can split a single English word
+                            # across lines (``Good mor`` + ``ning!``).
+                            for continuation in lookahead_lines[lookahead_index + 1:]:
+                                if (
+                                    continuation
+                                    and continuation[:1].islower()
+                                    and detail
+                                    and detail[-1:].isalpha()
+                                    and not re.search(r"[.!?]$", detail)
+                                ):
+                                    detail += continuation
+                                else:
+                                    break
+                            break
+                title = f"{prefix} {number}" + (f" · {detail}" if detail else "")
+                current_unit = CourseContentTree(
+                    id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
+                    title=clean_course_title(title), level=1, order_index=unit_order,
+                    source_file=source_file, source_type="pdf",
+                )
+                units[key] = current_unit
+                rebuilt.append(current_unit)
+            current_section = None
+            section_order = 0
+            continue
+
+        if current_unit is None:
+            continue
+        if _ENGLISH_SECTION_LINE.match(line):
+            section_title = clean_course_title(_english_section_display_title(line))
+            section_key = (str(current_unit.id), section_title.lower())
+            if section_key in section_keys:
+                current_section = next(
+                    (node for node in rebuilt if str(node.id) == section_key[0] and node.title.lower() == section_key[1]),
+                    current_unit,
+                )
+            else:
+                section_order += 1
+                current_section = CourseContentTree(
+                    id=uuid.uuid4(), course_id=course_id, parent_id=current_unit.id,
+                    title=section_title, level=2, order_index=section_order,
+                    source_file=source_file, source_type="pdf",
+                )
+                section_keys.add(section_key)
+                rebuilt.append(current_section)
+            continue
+        append(current_section or current_unit, line)
+
+    if len(units) < 3:
+        return []
+    return rebuilt
+
+
 def _restructure_textbook_nodes(
     nodes: list[CourseContentTree], course_id: uuid.UUID, source_file: str,
     markdown: str | None = None,
@@ -632,6 +898,20 @@ def _restructure_textbook_nodes(
             re.sub(r"\s+", " ", raw_line).strip(" #\t")
             for chunk in chunks for raw_line in chunk.splitlines()
         ]
+
+    # English textbook PDFs have a different outline grammar from Chinese
+    # humanities and mathematics materials.  Keep this branch strictly gated
+    # by the source filename so the existing Chinese/math chapter and section
+    # recovery paths remain unchanged.
+    if re.search(r"(?:英语|english)", source_file, re.IGNORECASE):
+        english_body_start = _english_textbook_body_start(lines)
+        if english_body_start is not None:
+            english_nodes = _restructure_english_textbook_nodes(
+                lines, english_body_start, course_id, source_file,
+            )
+            if english_nodes:
+                return english_nodes
+
     toc_index, body_start = _find_textbook_body_start(lines)
     if body_start is not None and any(_UNIT_LINE.match(line) for line in lines[body_start:]):
         unit_nodes = _restructure_unit_textbook_nodes(lines, body_start, course_id, source_file)
@@ -650,18 +930,11 @@ def _restructure_textbook_nodes(
         level=0, order_index=0, source_file=source_file, source_type="pdf",
     )
     rebuilt = [root]
-    front_text = "\n".join(lines[:body_start]).strip()
-    if front_text:
-        rebuilt.append(CourseContentTree(
-            id=uuid.uuid4(), course_id=course_id, parent_id=root.id,
-            title="前言与目录", level=1, order_index=1, content=front_text,
-            source_file=source_file, source_type="pdf", content_category="reference",
-        ))
 
     chapter = None
     chapter_key = None
     section = None
-    chapter_order = 1
+    chapter_order = 0
     section_order = 0
     sections_in_chapter: dict[str, CourseContentTree] = {}
     for line in lines[body_start:]:

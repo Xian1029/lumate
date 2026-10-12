@@ -7,7 +7,7 @@ import {
 } from "./mermaid";
 
 describe("stabilizeMermaidCode", () => {
-  it("simplifies risky mindmap labels into safer plain text", () => {
+  it("preserves learner-facing punctuation while neutralizing shape syntax", () => {
     const input = [
       "mindmap",
       "  root((Python Data Types))",
@@ -17,17 +17,17 @@ describe("stabilizeMermaidCode", () => {
       "        : Example: 42",
       "      dict",
       "        : Example: {\"a\": 1}",
+      "    What’s your name?",
     ].join("\n");
 
     const result = stabilizeMermaidCode(input);
 
     expect(result).toContain("root((Python Data Types))");
-    expect(result).toContain("      int integer");
+    expect(result).toContain("      int （integer）");
     expect(result).toContain("        Immutable");
-    expect(result).toContain("        Example 42");
-    expect(result).toContain("        Example a 1");
-    expect(result).not.toContain(": Immutable");
-    expect(result).not.toContain("{\"a\": 1}");
+    expect(result).toContain("        Example: 42");
+    expect(result).toContain("        Example: ｛＂a＂: 1｝");
+    expect(result).toContain("What’s your name?");
   });
 
   it("leaves non-mindmap diagrams untouched", () => {
@@ -57,7 +57,7 @@ describe("stabilizeMarkdownMermaidBlocks", () => {
 
     expect(result).toContain("# Title");
     expect(result).toContain("```mermaid\nmindmap");
-    expect(result).toContain("Example a 1");
+    expect(result).toContain("Example: ｛＂a＂: 1｝");
     expect(result).toContain("```python\nprint('ok')\n```");
   });
 });
@@ -76,7 +76,7 @@ describe("buildMermaidFallbackText", () => {
       [
         "Python Data Types",
         "  - Basic Types",
-        "    - int integer",
+        "    - int （integer）",
         "      - Immutable",
       ].join("\n"),
     );

@@ -126,8 +126,9 @@ export function useNewProject() {
   }, []);
 
   /* ---------- Multi-subject upload plan ---------- */
-  // Always classify picked files. A single ambiguous file still needs a human
-  // decision; only grouping is conditional on the result size.
+  // Always classify picked files. A single ambiguous document is safe to keep
+  // as its own neutral space (named from the file/project name); only a batch
+  // of ambiguous documents needs an explicit grouping decision.
   useEffect(() => {
     if (files.length === 0) {
       setUploadPlan(null);
@@ -137,7 +138,13 @@ export function useNewProject() {
     const timer = window.setTimeout(async () => {
       try {
         const plan = await planUploadSpaces(files.map((f) => f.name));
-        if (!cancelled) setUploadPlan(plan);
+        if (!cancelled) {
+          setUploadPlan(plan);
+          if (plan.groups.length === 0 && plan.unclassified.length === 1) {
+            const filename = plan.unclassified[0].filename;
+            setFileAssignments((current) => current[filename] ? current : { ...current, [filename]: "__all__" });
+          }
+        }
       } catch {
         if (!cancelled) setUploadPlan(null);
       }
@@ -315,12 +322,17 @@ export function useNewProject() {
       // remaining files between separate group buckets.
       const combineAllFiles = files.length > 0 && Object.values(fileAssignments).includes("__all__");
       if (combineAllFiles) {
-        const course = await addCourse(projectName.trim() || "综合学习空间", nlInput.trim() || undefined, baseMetadata, "SETUP");
+        // A unified upload is a new, explicitly named destination. Never
+        // silently fall back to an opaque generic space: use the user-entered
+        // name, or derive a stable name from the first file.
+        const fallbackName = files[0]?.name.replace(/\.[^.]+$/, "").trim() || "综合学习资料";
+        const destinationName = projectName.trim() || fallbackName;
+        const course = await addCourse(destinationName, nlInput.trim() || undefined, baseMetadata, "SETUP");
         nextCourseId = course.id;
         nextCourseIds.push(course.id);
         setCreatedCourseId(course.id);
-        addLog(`${new Date().toLocaleTimeString()}  已按你的选择将全部资料放入同一学习空间`, "text-success");
-        await submitSources({ course, files, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName: projectName || "综合学习空间", addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
+        addLog(`${new Date().toLocaleTimeString()}  已将全部资料放入新建学习空间「${destinationName}」`, "text-success");
+        await submitSources({ course, files, url: "", mode: "upload", autoScrape: false, canvasSessionValid, projectName: destinationName, addLog, setCanvasSessionValid, setShowCanvasLogin, setCanvasLogging, setCanvasLoginError, setNoSourcesSubmitted, t });
         setCreatedCourseIds(nextCourseIds);
         return;
       }

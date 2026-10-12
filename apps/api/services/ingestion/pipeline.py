@@ -17,6 +17,7 @@ References:
 - Crawl4AI: xxhash for fast content dedup
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -65,9 +66,9 @@ from services.ingestion.auto_generation import (  # noqa: F401, E402
 logger = logging.getLogger(__name__)
 
 # Bump when persisted course-tree semantics change. Including this version in
-# the dedup digest lets an already-uploaded PDF be rebuilt once with the new
-# chapter/section parser instead of returning its legacy page-shaped tree.
-_INGESTION_SCHEMA_VERSION = b"textbook-sections-v2\0"
+# the dedup digest lets an already-uploaded document be rebuilt once with the
+# new chapter/section parser instead of returning its legacy noisy tree.
+_INGESTION_SCHEMA_VERSION = b"textbook-sections-v7-structured-report-sections\0"
 
 _PHASE_LABELS = {
     "uploaded": "Upload received",
@@ -263,9 +264,38 @@ async def run_ingestion_pipeline(
         if course_id:
             duplicate_filters.append(IngestionJob.course_id == course_id)
 
-        existing = await db.execute(select(IngestionJob).where(*duplicate_filters))
-        dupe = existing.scalar_one_or_none()
-        if dupe:
+        existing = await db.execute(
+            select(IngestionJob)
+            .where(*duplicate_filters)
+            .order_by(IngestionJob.created_at.desc())
+        )
+        # A completed job is only a valid dedup target if its dispatched
+        # artifacts really exist. A previous concurrent SQLite transaction
+        # could commit the job state while losing its content-tree writes;
+        # trusting that status would make every retry silently return a
+        # success with an empty workspace. Check the persisted tree before
+        # short-circuiting textbook/document uploads.
+        from models.content import CourseContentTree
+
+        for dupe in existing.scalars():
+            expected_tree_nodes = (dupe.dispatched_to or {}).get("content_tree", 0)
+            if expected_tree_nodes:
+                tree_count = await db.scalar(
+                    sa.select(sa.func.count(CourseContentTree.id)).where(
+                        CourseContentTree.course_id == dupe.course_id,
+                        CourseContentTree.source_file == (dupe.original_filename or filename),
+                    )
+                )
+                if tree_count < expected_tree_nodes:
+                    logger.warning(
+                        "Ignoring incomplete completed ingestion job %s for %s: "
+                        "it reports %s content nodes but only %s are persisted; allowing retry",
+                        dupe.id,
+                        filename,
+                        expected_tree_nodes,
+                        tree_count,
+                    )
+                    continue
             logger.info(f"Duplicate detected: {filename} (hash: {content_hash[:12]})")
             return dupe
 
@@ -488,12 +518,15 @@ async def run_ingestion_pipeline(
         job.workflow_state = "CLASSIFIED"
         await db.commit()
 
+        preview_nodes = None
         if job.content_category == "textbook" and (filename or "").lower().endswith(".pdf"):
             from services.parser.pdf import _markdown_to_tree, assess_textbook_outline_integrity
 
             _set_job_phase(job, status="classifying", progress_percent=55, workflow_state="DETECTING_STRUCTURE")
             await db.commit()
-            preview_nodes = _markdown_to_tree(extracted, job.course_id or uuid.uuid4(), filename)
+            preview_nodes = await asyncio.to_thread(
+                _markdown_to_tree, extracted, job.course_id or uuid.uuid4(), filename,
+            )
             outline_complete, outline_report = assess_textbook_outline_integrity(
                 extracted, preview_nodes,
             )
@@ -531,17 +564,27 @@ async def run_ingestion_pipeline(
             matched_id = await match_course(db, filename, extracted, user_id)
             if matched_id:
                 job.course_id = matched_id
+        if preview_nodes is not None and job.course_id is not None:
+            # A no-preset import may not have a course id when its preview is
+            # parsed. Rebind these detached tree rows after matching so the
+            # exact validated parse can be reused for persistence.
+            for node in preview_nodes:
+                node.course_id = job.course_id
 
         # Step 5: Status update
         _set_job_phase(job, status="dispatching", progress_percent=70)
         await db.commit()
 
         # Step 6: Dispatch to business tables
-        dispatch_result = await _dispatch_content(db, job)
+        dispatch_result = await _dispatch_content(db, job, parsed_nodes=preview_nodes)
         job.dispatched = True
         job.dispatched_to = dispatch_result
         text_categories = {"lecture_slides", "textbook", "notes", "syllabus"}
-        if job.content_category in text_categories and not (dispatch_result or {}).get("content_tree"):
+        # Generic office documents are valid learning material even when the
+        # classifier cannot infer a subject. They still need a content tree;
+        # otherwise a perfectly readable DOCX is reported as unparseable.
+        office_text_source = (filename or "").lower().endswith((".docx", ".doc", ".odt", ".rtf"))
+        if (job.content_category in text_categories or office_text_source) and not (dispatch_result or {}).get("content_tree"):
             _set_job_phase(
                 job,
                 status="failed",

@@ -71,6 +71,56 @@ def test_unheaded_material_is_split_into_readable_sections() -> None:
     assert all((node.title or "").strip() for node in nodes)
 
 
+def test_unheaded_notes_do_not_promote_inline_toc_words_links_or_tables() -> None:
+    nodes = _markdown_to_tree(
+        """PBLWorks内容梳理
+
+一、基本信息与成立背景
+PBLWorks是一家教育机构。服务与产品目录中有更多说明。
+
+https://www.pblworks.org/about
+
+| 维度 | 介绍 |
+| --- | --- |
+| 成立时间 | 1987年 |
+
+二、合作方式
+企业可以先核实授权范围。""",
+        uuid.uuid4(),
+        "PBLWorks相关内容梳理.docx",
+    )
+    titles = [node.title for node in nodes]
+
+    assert "一、基本信息与成立背景" in titles
+    assert "二、合作方式" in titles
+    assert not any(title.startswith("http") for title in titles)
+    assert not any(title.startswith("|") for title in titles)
+    assert not any("服务与产品目录中" in title for title in titles)
+
+
+def test_formal_toc_hint_without_body_boundary_uses_topic_titles() -> None:
+    nodes = _markdown_to_tree(
+        """调研报告
+
+调研时间：2026年9月14日
+
+目录
+
+一、摘要
+这是摘要正文。
+
+二、学院概况
+这是概况正文。""",
+        uuid.uuid4(),
+        "调研报告.docx",
+    )
+    titles = [node.title for node in nodes]
+
+    assert "一、摘要" in titles
+    assert "二、学院概况" in titles
+    assert "调研时间：2026年9月14日" not in titles
+
+
 def test_chinese_textbook_names_and_directory_markers_are_classified_locally() -> None:
     assert classify_by_filename("人教版初中数学 七年级上册 课本.pdf") == "textbook"
     assert classify_by_filename("义务教育教科书语文七年级下册.pdf") == "textbook"

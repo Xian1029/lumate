@@ -4,6 +4,7 @@ Routes classified content into content_tree, assignments, or exam records,
 then triggers deadline extraction and auto-generation of learning content.
 """
 
+import asyncio
 import logging
 
 import sqlalchemy as sa
@@ -16,7 +17,11 @@ from models.ingestion import IngestionJob, Assignment
 logger = logging.getLogger(__name__)
 
 
-async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
+async def dispatch_content(
+    db: AsyncSession,
+    job: IngestionJob,
+    parsed_nodes: list | None = None,
+) -> dict:
     """Step 6: Dispatch extracted content to appropriate business tables."""
     result = {}
 
@@ -26,8 +31,13 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
     category = job.content_category or "other"
     source_name = (job.original_filename or "").lower()
     inferred_text_source = (
-        source_name.endswith((".md", ".txt", ".rst", ".html", ".htm"))
+        source_name.endswith((".md", ".txt", ".rst", ".html", ".htm", ".docx", ".doc", ".odt", ".rtf"))
         or (job.mime_type or "").startswith("text/")
+        or (job.mime_type or "").lower() in {
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/rtf",
+        }
         or job.source_type == "url"
     )
 
@@ -122,13 +132,17 @@ async def dispatch_content(db: AsyncSession, job: IngestionJob) -> dict:
                 nodes.append(child)
             logger.info("PPT split into %d slide nodes for %s", len(slide_chunks), source_label)
         else:
-            nodes = _markdown_to_tree(
+            nodes = parsed_nodes
+            if nodes is None:
                 # Defensive second boundary: older extractors and imported
-                # jobs cannot bypass the Markdown-safe text contract.
-                markdown=normalize_pdf_markdown(job.extracted_markdown) or "",
-                course_id=job.course_id,
-                source_file=source_label,
-            )
+                # jobs cannot bypass the Markdown-safe text contract. Parsing
+                # is CPU work; keep it off the async API event loop.
+                nodes = await asyncio.to_thread(
+                    _markdown_to_tree,
+                    markdown=normalize_pdf_markdown(job.extracted_markdown) or "",
+                    course_id=job.course_id,
+                    source_file=source_label,
+                )
         outline_report = (job.page_stats or {}).get("outline_integrity", {})
         structure_source = "SOURCE_TOC" if outline_report.get("checked") else "GENERATED_FROM_CONTENT"
         # SQLite otherwise checks self-referential FKs at each statement,

@@ -110,6 +110,13 @@ describe("request", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it("fails a mutation fast instead of retrying a button click", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ detail: "Server error" }, 500));
+
+    await expect(request("/courses/1", { method: "DELETE" })).rejects.toThrow(ApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("retries on network errors (TypeError)", async () => {
     mockFetch
       .mockRejectedValueOnce(new TypeError(t("ui.failed_to_fetch")))

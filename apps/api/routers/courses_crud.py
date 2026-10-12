@@ -1,6 +1,7 @@
 """Course CRUD endpoints: list, create, get, update, delete, content tree."""
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -42,8 +43,39 @@ DEFAULT_USER_NAME = "Local User"
 
 
 def _serialize_content_tree(nodes: list[CourseContentTree]) -> list[ContentNodeResponse]:
+    def is_front_matter(node: CourseContentTree) -> bool:
+        title = normalize_textbook_outline_title(node.title or "").strip().lower()
+        compact_title = re.sub(r"[\s:：·._-]+", "", title)
+        return compact_title in {
+            "前言与目录", "前言", "目录", "contents", "content", "preface",
+            "foreword", "introduction",
+        }
+
+    # Old imports flattened each uploaded book's chapter roots into one list.
+    # Equal per-book order_index values then interleaved (e.g. chapters 1, 7,
+    # 2, 8). Recreate a material wrapper at read time so every book retains
+    # its own publisher order, without mutating stored learning data.
+    source_orphans: dict[str, list[CourseContentTree]] = {}
+    ordinary_roots: list[CourseContentTree] = []
+    for node in nodes:
+        if node.parent_id is not None or is_front_matter(node):
+            continue
+        source_file = (getattr(node, "source_file", None) or "").strip()
+        if node.level > 0 and source_file:
+            source_orphans.setdefault(source_file, []).append(node)
+        else:
+            ordinary_roots.append(node)
+    orphan_ids = {node.id for group in source_orphans.values() for node in group}
+
     by_parent: dict[uuid.UUID | None, list[CourseContentTree]] = {}
     for node in nodes:
+        # Front matter should not be in the learner-facing course outline,
+        # including for courses created before the parser stopped emitting it.
+        if is_front_matter(node):
+            continue
+        # These nodes are attached to synthetic material wrappers below.
+        if node.id in orphan_ids:
+            continue
         by_parent.setdefault(node.parent_id, []).append(node)
 
     for siblings in by_parent.values():
@@ -64,7 +96,25 @@ def _serialize_content_tree(nodes: list[CourseContentTree]) -> list[ContentNodeR
             children=[build(child) for child in by_parent.get(node.id, [])],
         )
 
-    return [build(node) for node in by_parent.get(None, [])]
+    result = [build(node) for node in ordinary_roots if not is_front_matter(node)]
+    material_groups = sorted(
+        source_orphans.items(),
+        key=lambda pair: min((item.created_at for item in pair[1]), default=datetime.min.replace(tzinfo=timezone.utc)),
+    )
+    for source_file, roots in material_groups:
+        roots.sort(key=lambda item: (item.order_index, item.created_at, str(item.id)))
+        material_id = uuid.uuid5(uuid.NAMESPACE_URL, f"course-material:{roots[0].course_id}:{source_file}")
+        result.append(ContentNodeResponse(
+            id=material_id,
+            title=source_file,
+            content=None,
+            level=0,
+            order_index=min(item.order_index for item in roots),
+            source_type=roots[0].source_type,
+            source_file=source_file,
+            children=[build(node) for node in roots],
+        ))
+    return sorted(result, key=lambda item: (item.order_index, item.title))
 
 
 async def get_or_create_user(db: AsyncSession) -> User:

@@ -27,6 +27,40 @@ describe("MarkdownRenderer", () => {
     expect(screen.getByText("先看懂：").tagName).toBe("STRONG");
     expect(screen.queryByText(/\*\*先看懂/)).not.toBeInTheDocument();
   });
+
+  it("repairs malformed bold delimiters in generated prose", () => {
+    const content = [
+      "打招呼可以说 **Good morning!**、 **Hello!** 或** Hi.**",
+      "介绍自己可以说 I’m + 名字，也可以说** My name’s + 名字**。",
+      "称呼女性可以用 Ms。 ** Self-check（自我想一想）：** 如果有人这样说。",
+    ].join("\n");
+
+    expect(normalizeMarkdownEmphasis(content)).toBe([
+      "打招呼可以说 **Good morning!**、 **Hello!** 或 **Hi.**",
+      "介绍自己可以说 I’m + 名字，也可以说 **My name’s + 名字**。",
+      "称呼女性可以用 Ms。 **Self-check（自我想一想）：** 如果有人这样说。",
+    ].join("\n"));
+
+    render(<MarkdownRenderer content={content} />);
+    expect(screen.getByText("Hi.").tagName).toBe("STRONG");
+    expect(screen.getByText("My name’s + 名字").tagName).toBe("STRONG");
+    expect(screen.getByText("Self-check（自我想一想）：").tagName).toBe("STRONG");
+  });
+
+  it("leaves fenced code unchanged while normalizing prose", () => {
+    const content = [
+      "说明：或** Hi.**",
+      "```text",
+      "或** Hi.**",
+      "```",
+    ].join("\n");
+    expect(normalizeMarkdownEmphasis(content)).toBe([
+      "说明：或 **Hi.**",
+      "```text",
+      "或** Hi.**",
+      "```",
+    ].join("\n"));
+  });
   it("renders headings, lists, and a complete scrollable table", () => {
     render(
       <MarkdownRenderer
