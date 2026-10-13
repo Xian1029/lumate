@@ -50,7 +50,7 @@ docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|o
 sudo sh scripts/fix_llm_persistence.sh
 ```
 
-脚本会构建并重启 `lumate-customized` 服务，隐藏输入 API Key，将运行时 LLM 配置保存到 Lumate 专用数据卷，并检查 provider 健康状态。它优先使用 `deploy/.env.production`；旧部署若仅有仓库根目录 `.env`，只要包含所需生产变量也会自动兼容。脚本会在构建前验证配置，避免因缺少密钥或域名配置而中途切换服务。它不会修改任何 `opentutor-*` 容器、网络或数据卷。
+脚本会构建并重启 `lumate-customized` 服务，隐藏输入 API Key，将运行时 LLM 配置保存到 Lumate 专用数据卷，并检查 provider 健康状态。它优先使用 `deploy/.env.production`；旧部署若只有仓库根目录 `.env`，会以权限 `600` 创建生产配置副本。若缺少 `JWT_SECRET_KEY` 或 `ENCRYPTION_KEY`，脚本会自动生成并持久化；缺少 `CORS_ORIGINS` 时才会要求输入公网 HTTPS 域名。最后会在构建前验证 Compose 配置，避免因缺少密钥或域名配置而中途切换服务。它不会修改任何 `opentutor-*` 容器、网络或数据卷。
 
 `deploy/.env.production` 只存在于部署主机，不要提交到 Git。首次启动会创建数据库表和系统初始数据；之后可将 `APP_AUTO_CREATE_TABLES` 与 `APP_AUTO_SEED_SYSTEM` 改为 `false`，再执行 `docker compose ... up -d`。
 

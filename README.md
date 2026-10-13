@@ -69,9 +69,11 @@ The script rebuilds only the `lumate-customized` stack, prompts for the cloud
 LLM provider, model, and API key without echoing the key, then verifies provider
 health. Runtime settings are persisted in the Lumate data volume and survive
 container restarts. It does not modify `opentutor-*` containers, networks, or
-volumes. It uses `deploy/.env.production`, or automatically falls back to an
-existing legacy root `.env` when it contains all required production variables.
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the production prerequisites.
+volumes. If the production file is missing, it securely creates
+`deploy/.env.production` from a legacy root `.env`, generates missing JWT and
+encryption keys, and asks for `CORS_ORIGINS` only when required. It validates
+the Compose configuration before rebuilding. See [DEPLOYMENT.md](DEPLOYMENT.md)
+for the production prerequisites.
 
 ### One-Click Cloud Deploy
 
