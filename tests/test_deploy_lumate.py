@@ -23,8 +23,12 @@ class DeploymentTests(unittest.TestCase):
         (self.root / 'deploy/.env.production.example').write_text(
             'APP_ENVIRONMENT=production\nCSRF_SECRET_KEY=replace-with-example\nAUTH_ENABLED=false\nDEPLOYMENT_MODE=single_user\nENCRYPTION_KEY=replace-with-example\nCORS_ORIGINS=http://localhost:3003\nLLM_PROVIDER=deepseek\nLLM_MODEL=deepseek-chat\nDEEPSEEK_API_KEY=\n')
         self.calls = []
+        self.call_kwargs = []
         self.fail_stage = None
+        self.corrupt_config_key = False
         self.runtime_environment = 'development'
+        self.runtime_auth_enabled = 'false'
+        self.runtime_deployment_mode = 'single_user'
         self.cwd = Path.cwd()
         self.config = {
             'networks': {'default': {'name': 'lumate-customized-network'}},
@@ -40,13 +44,23 @@ class DeploymentTests(unittest.TestCase):
 
     def run_mock(self, args, **kwargs):
         self.calls.append(args)
+        self.call_kwargs.append(kwargs)
         if self.fail_stage and self.fail_stage in args:
             raise subprocess.CalledProcessError(1, args)
         if '--format' in args:
+            profile = Path(args[args.index('--env-file') + 1])
+            values = deploy.read_env(profile.read_text())
+            actual = self.config['services']['api']['environment']
+            actual['LLM_PROVIDER'] = values['LLM_PROVIDER']
+            actual['LLM_MODEL'] = values['LLM_MODEL']
+            key_name = deploy.KEYS[values['LLM_PROVIDER']]
+            actual[key_name] = 'wrong-key' if self.corrupt_config_key else values[key_name]
             return subprocess.CompletedProcess(args, 0, json.dumps(self.config), '')
         if 'inspect' in args:
             states = [{'State': {'Health': {'Status': 'healthy'}}, 'Config': {'Env': [
-                'ENVIRONMENT=' + self.runtime_environment, 'AUTH_ENABLED=false', 'DEPLOYMENT_MODE=single_user']}}] * 3
+                'ENVIRONMENT=' + self.runtime_environment,
+                'AUTH_ENABLED=' + self.runtime_auth_enabled,
+                'DEPLOYMENT_MODE=' + self.runtime_deployment_mode]}}] * 3
             return subprocess.CompletedProcess(args, 0, json.dumps(states), '')
         return subprocess.CompletedProcess(args, 0, '', '')
 
@@ -117,6 +131,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(first['APP_ENVIRONMENT'], 'development')
         stages = [s for call in self.calls[:8] for s in call if s in ('build', 'run', 'up')]
         self.assertEqual(stages, ['build', 'run', 'up'])
+        preflight = [(call, kwargs) for call, kwargs in zip(self.calls, self.call_kwargs) if 'run' in call]
+        self.assertEqual(len(preflight), 2)
+        for call, kwargs in preflight:
+            self.assertEqual(call[-4:], ['python', '-m', 'services.llm.deployment_preflight',
+                                         '--require-development-single-user'])
+            self.assertNotIn('data', kwargs)
 
     def test_legacy_empty_keys_and_duplicate_entries(self):
         (self.root / 'deploy/.env.development.example').write_text('APP_ENVIRONMENT=development\nAUTH_ENABLED=false\nDEPLOYMENT_MODE=single_user\nJWT_SECRET_KEY=' + 'a'*40 + '\nENCRYPTION_KEY=\nENCRYPTION_KEY=""\nCORS_ORIGINS=https://learn.example.com\nLLM_PROVIDER=deepseek\nLLM_MODEL=deepseek-chat\nDEEPSEEK_API_KEY=test-key\n')
@@ -178,9 +198,25 @@ class DeploymentTests(unittest.TestCase):
             self.execute()
         self.assertFalse(any('build' in call for call in self.calls))
 
+    def test_wrong_composed_api_key_stops_before_build(self):
+        self.corrupt_config_key = True
+        with self.assertRaisesRegex(ValueError, 'LLM settings differ'):
+            self.execute()
+        self.assertFalse(any('build' in call for call in self.calls))
+
     def test_running_container_must_confirm_development_environment(self):
         self.runtime_environment = 'production'
         with self.assertRaisesRegex(ValueError, 'Running API container does not have ENVIRONMENT=development'):
+            self.execute()
+
+    def test_running_container_must_confirm_single_user_auth(self):
+        self.runtime_auth_enabled = 'true'
+        with self.assertRaisesRegex(ValueError, 'Running API container does not have AUTH_ENABLED=false'):
+            self.execute()
+
+    def test_running_container_must_confirm_single_user_mode(self):
+        self.runtime_deployment_mode = 'multi_user'
+        with self.assertRaisesRegex(ValueError, 'Running API container does not have DEPLOYMENT_MODE=single_user'):
             self.execute()
 
     def test_default_profile_does_not_inherit_local_env(self):

@@ -232,15 +232,15 @@ def main():
     if not model:
         raise ValueError("Model name is required.")
     key_name = KEYS[provider]
-    key = runtime.get(key_name, values.get(key_name) or previous.get(key_name) or "")
-    if options.configure or missing(key):
+    llm_secret = runtime.get(key_name, values.get(key_name) or previous.get(key_name) or "")
+    if options.configure or missing(llm_secret):
         if not sys.stdin.isatty():
             raise ValueError("Run in an interactive terminal to enter the API key with hidden input.")
-        key = getpass.getpass(f"{provider} API key (hidden): ").strip()
-    if missing(key):
+        llm_secret = getpass.getpass(f"{provider} API key (hidden): ").strip()
+    if missing(llm_secret):
         raise ValueError("A real cloud API key is required.")
     updates.update(LLM_PROVIDER=provider, LLM_MODEL=model, LLM_REQUIRED="true")
-    updates[key_name] = key
+    updates[key_name] = llm_secret
     values.update(updates)
     validate(values)
     env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,9 +261,12 @@ def main():
     if env_path == ROOT / "deploy/.env.development":
         actual = config["services"]["api"].get("environment", {})
         expected = {"ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
-        for key, value in expected.items():
-            if str(actual.get(key, "")).lower() != value:
-                raise ValueError(f"Docker Compose API environment must set {key}={value} before deployment.")
+        for setting_name, expected_value in expected.items():
+            if str(actual.get(setting_name, "")).lower() != expected_value:
+                raise ValueError(f"Docker Compose API environment must set {setting_name}={expected_value} before deployment.")
+    actual = config["services"]["api"].get("environment", {})
+    if actual.get("LLM_PROVIDER") != provider or actual.get("LLM_MODEL") != model or actual.get(key_name) != llm_secret:
+        raise ValueError("Docker Compose API LLM settings differ from the selected deployment profile. Check env-file overrides before building.")
     if config["networks"]["default"]["name"] != PROJECT + "-network":
         raise ValueError("Unexpected network scope in deployment Compose file.")
     for service in ("api", "web", "redis"):
@@ -274,36 +277,21 @@ def main():
             raise ValueError("Unexpected volume scope in Compose configuration.")
     print("Building Lumate API and Web images...", flush=True)
     run(compose + ["build", "api", "web"], capture=False, timeout=3600)
-    # The one-off API uses the same image, environment and persistent volume.
-    # It runs before replacing live services; credentials are supplied on stdin.
-    probe = """
-import asyncio,json,sys
-from services.llm.local_config import test_llm_connection,update_llm_runtime_config
-p=json.load(sys.stdin)
-async def check():
+    # The project-owned preflight reads the exact environment used by the API
+    # container. Never pass credentials in a second script-built payload.
+    preflight = ["python", "-m", "services.llm.deployment_preflight"]
+    if env_path == ROOT / "deploy/.env.development":
+        preflight.append("--require-development-single-user")
     try:
-        result=await asyncio.wait_for(test_llm_connection(p['provider'],p['model'],p['key']),timeout=90)
-        if not result['ok']: raise RuntimeError('Unexpected response')
-    except Exception as e:
-        print('LLM test failed: '+type(e).__name__+'; check key, quota, model and outbound network.',file=sys.stderr)
-        sys.exit(1)
-asyncio.run(check())
-try:
-    update_llm_runtime_config({'provider':p['provider'],'model':p['model'],'llm_required':True,'provider_keys':{p['provider']:p['key']}})
-except Exception as e:
-    print('LLM configuration save failed: '+type(e).__name__+'; check Lumate data-volume permissions.',file=sys.stderr)
-    sys.exit(1)
-print('Real LLM request succeeded; configuration saved to Lumate data volume.')
-"""
-    try:
-        run(compose + ["run", "--rm", "--no-deps", "-T", "api", "python", "-c", probe],
-            data=json.dumps({"provider": provider, "model": model, "key": key}), timeout=180)
+        run(compose + ["run", "--rm", "--no-deps", "-T", "api"] + preflight, timeout=180)
     except subprocess.CalledProcessError as exc:
         # Compose and Python may include credentials in arbitrary stderr. Only
         # relay the probe's deliberately sanitized, fixed-format status line.
         diagnostic = re.search(
-            r"(?m)^(LLM (?:test|configuration save) failed: [A-Za-z_][A-Za-z_0-9]*; "
-            r"(?:check key, quota, model and outbound network|check Lumate data-volume permissions)\.)$",
+            r"(?m)^((?:LLM (?:test|configuration save) failed: [A-Za-z_][A-Za-z_0-9]*; "
+            r"(?:check key, quota, model and outbound network|check Lumate data-volume permissions)\."
+            r"|LLM preflight failed: (?:A supported cloud provider and model are required|The selected provider's API key is missing from the API container"
+            r"|API container must set (?:ENVIRONMENT=development|AUTH_ENABLED=false|DEPLOYMENT_MODE=single_user))\.))$",
             exc.stderr or "",
         )
         if diagnostic:
@@ -321,9 +309,9 @@ print('Real LLM request succeeded; configuration saved to Lumate data volume.')
         if env_path == ROOT / "deploy/.env.development":
             running_env = dict(item.split("=", 1) for item in states[0]["Config"].get("Env", []) if "=" in item)
             expected = {"ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
-            for key, value in expected.items():
-                if running_env.get(key, "").lower() != value:
-                    raise ValueError(f"Running API container does not have {key}={value}; deployment is not complete.")
+            for setting_name, expected_value in expected.items():
+                if running_env.get(setting_name, "").lower() != expected_value:
+                    raise ValueError(f"Running API container does not have {setting_name}={expected_value}; deployment is not complete.")
         if all(s["State"].get("Health", {}).get("Status") == "healthy" for s in states):
             print("Deployment successful: API, Web and Redis are healthy. LLM settings survive restarts.")
             if env_path == ROOT / "deploy/.env.development":

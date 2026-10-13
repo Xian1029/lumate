@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 import sqlalchemy as sa
 from sqlalchemy.exc import ProgrammingError
+from dotenv import dotenv_values
 
 from libs.exceptions import KnowledgeGraphUnavailableError, NotFoundError, ValidationError
 from routers.chat import _resolve_chat_session
@@ -181,7 +182,7 @@ def test_update_llm_runtime_config_persists_and_masks(monkeypatch, tmp_path):
     openai_status = next(item for item in config["providers"] if item["provider"] == "openai")
     assert openai_status["has_key"] is True
     assert openai_status["masked_key"] == "sk-t...5678"
-    assert "OPENAI_API_KEY=sk-test-12345678" in env_path.read_text()
+    assert dotenv_values(env_path)["OPENAI_API_KEY"] == "sk-test-12345678"
     assert llm_router._registry is None
 
 
@@ -207,7 +208,8 @@ def test_update_llm_runtime_config_can_delete_saved_key(monkeypatch, tmp_path):
 
     openai_status = next(item for item in config["providers"] if item["provider"] == "openai")
     assert openai_status["has_key"] is False
-    assert "OPENAI_API_KEY" not in env_path.read_text()
+    # An explicit empty value must override any Compose-provided default.
+    assert dotenv_values(env_path)["OPENAI_API_KEY"] == ""
 
 
 def test_build_session_title_trims_and_compacts_whitespace():
