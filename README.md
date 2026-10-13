@@ -40,7 +40,7 @@ sudo sh scripts/deploy.sh
 
 `deploy.sh` 调用项目内的 Python 标准库部署程序，无须为部署程序安装 Python 包。旧入口 `scripts/fix_llm_persistence.sh` 已移除。
 
-无参数时使用 `deploy/.env.development`（首次从 `deploy/.env.development.example` 创建），并校验 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`。仍可沿用之前的方式传入另一份配置：`sudo sh scripts/deploy.sh --env-file deploy/.env.production` 或 `sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。路径相对于仓库根目录；除内置的开发与生产示例外，自定义配置文件须先创建。不同配置文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。
+无参数时使用 `deploy/.env.development`（首次从 `deploy/.env.development.example` 创建），并将模式字段规范为 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`；已有文件先备份，密钥等其他字段保留。仍可沿用之前的方式传入另一份配置：`sudo sh scripts/deploy.sh --env-file deploy/.env.production` 或 `sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。路径相对于仓库根目录；除内置的开发与生产示例外，自定义配置文件须先创建。不同配置文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。
 
 默认开发配置关闭 JWT 登录与 CSRF 校验，所有访问者共用一个账号；已有多账号数据库会使用最早创建的账号。任何能打开 Web 地址的人都能查看或修改该账号的学习数据。生产配置仍保留单用户与 CSRF 防护；若配置文件显式开启 JWT，仍须设置至少 32 字符的 `JWT_SECRET_KEY`。
 
@@ -53,7 +53,7 @@ sudo sh scripts/deploy.sh
 5. 原子保存权限为 `600` 的所选配置，并为已有配置文件创建独立备份。
 6. 校验 Compose 的容器和数据卷命名，构建 API 与 Web 镜像。
 7. 使用新 API 镜像发起一次真实 LLM 请求。成功后将 LLM 配置写入 Lumate 持久化数据卷。
-8. 启动三个服务，最多等待 180 秒，全部健康后才报告部署成功。
+8. 启动三个服务，最多等待 180 秒；开发配置会核对 Compose 与实际 API 容器中的模式变量，全部健康且模式正确后才报告部署成功。
 
 部署程序会区分容器和同名镜像：Lumate 容器不存在时自动创建，存在时按所选配置更新。删除容器不会删除命名数据卷；首次从旧生产配置切换到开发配置时，脚本会尝试从 `deploy/.env.production` 恢复原加密密钥与 LLM 配置。如果数据卷仍在却无法找到原加密密钥，脚本会停止并提示恢复密钥，避免用新密钥覆盖旧数据。
 

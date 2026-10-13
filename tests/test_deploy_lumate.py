@@ -24,12 +24,15 @@ class DeploymentTests(unittest.TestCase):
             'APP_ENVIRONMENT=production\nCSRF_SECRET_KEY=replace-with-example\nAUTH_ENABLED=false\nDEPLOYMENT_MODE=single_user\nENCRYPTION_KEY=replace-with-example\nCORS_ORIGINS=http://localhost:3003\nLLM_PROVIDER=deepseek\nLLM_MODEL=deepseek-chat\nDEEPSEEK_API_KEY=\n')
         self.calls = []
         self.fail_stage = None
+        self.runtime_environment = 'development'
         self.cwd = Path.cwd()
         self.config = {
             'networks': {'default': {'name': 'lumate-customized-network'}},
             'services': {s: {'container_name': 'lumate-customized-' + s} for s in ('api', 'web', 'redis')},
             'volumes': {'lumate_customized_' + s: {'name': 'lumate-customized_' + s} for s in ('data', 'uploads', 'redis')},
         }
+        self.config['services']['api']['environment'] = {
+            'ENVIRONMENT': 'development', 'AUTH_ENABLED': 'false', 'DEPLOYMENT_MODE': 'single_user'}
 
     def tearDown(self):
         os.chdir(self.cwd)
@@ -42,7 +45,8 @@ class DeploymentTests(unittest.TestCase):
         if '--format' in args:
             return subprocess.CompletedProcess(args, 0, json.dumps(self.config), '')
         if 'inspect' in args:
-            states = [{'State': {'Health': {'Status': 'healthy'}}}] * 3
+            states = [{'State': {'Health': {'Status': 'healthy'}}, 'Config': {'Env': [
+                'ENVIRONMENT=' + self.runtime_environment, 'AUTH_ENABLED=false', 'DEPLOYMENT_MODE=single_user']}}] * 3
             return subprocess.CompletedProcess(args, 0, json.dumps(states), '')
         return subprocess.CompletedProcess(args, 0, '', '')
 
@@ -154,12 +158,30 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(profile['APP_ENVIRONMENT'], 'production')
         self.assertFalse((self.root / 'deploy/.env.development').exists())
 
-    def test_development_profile_rejects_auth_or_environment_drift(self):
+    def test_development_profile_normalizes_auth_and_environment_drift(self):
         (self.root / 'deploy/.env.development').write_text(
-            'APP_ENVIRONMENT=production\nAUTH_ENABLED=true\nDEPLOYMENT_MODE=multi_user\n')
-        with self.assertRaisesRegex(ValueError, 'APP_ENVIRONMENT=development'):
+            'APP_ENVIRONMENT=production\nAUTH_ENABLED=true\nDEPLOYMENT_MODE=multi_user\n'
+            'CORS_ORIGINS=https://learn.example.com\n')
+        self.execute()
+        profile = deploy.read_env((self.root / 'deploy/.env.development').read_text())
+        self.assertEqual(profile['APP_ENVIRONMENT'], 'development')
+        self.assertEqual(profile['AUTH_ENABLED'], 'false')
+        self.assertEqual(profile['DEPLOYMENT_MODE'], 'single_user')
+        backups = list((self.root / 'deploy').glob('.env.development.backup-*'))
+        self.assertEqual(len(backups), 1)
+        self.assertIn('APP_ENVIRONMENT=production', backups[0].read_text())
+        self.assertTrue(any('up' in call for call in self.calls))
+
+    def test_wrong_composed_environment_stops_before_build(self):
+        self.config['services']['api']['environment']['ENVIRONMENT'] = 'production'
+        with self.assertRaisesRegex(ValueError, 'ENVIRONMENT=development'):
             self.execute()
-        self.assertFalse(any('build' in c for c in self.calls))
+        self.assertFalse(any('build' in call for call in self.calls))
+
+    def test_running_container_must_confirm_development_environment(self):
+        self.runtime_environment = 'production'
+        with self.assertRaisesRegex(ValueError, 'Running API container does not have ENVIRONMENT=development'):
+            self.execute()
 
     def test_default_profile_does_not_inherit_local_env(self):
         (self.root / '.env').write_text(

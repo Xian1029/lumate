@@ -31,9 +31,9 @@ sudo sh scripts/deploy.sh
 
 脚本默认读取 `deploy/.env.development`，首次从 `deploy/.env.development.example` 创建；可继续用 `--env-file` 指定另一份配置，例如 `sudo sh scripts/deploy.sh --env-file deploy/.env.production`。生产文件首次从其示例创建；其他自定义文件需要先准备。不会借用根目录本地 `.env`。配置原子保存为权限 `600` 的文件，并保留旧文件备份。不同文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。脚本会生成或复用 CSRF 签名密钥；Fernet 加密密钥缺失时生成，已有密钥格式错误或与容器不一致时停止核对。缺少访问地址、模型名或 API Key 时会提示输入，API Key 隐藏输入。
 
-默认配置为 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`。这种模式不验证 JWT，且不启用 CSRF 请求校验；所有访问者共用一个账号，已有多账号数据库会使用最早创建的账号。必须用防火墙、VPN 或反向代理访问控制限制使用者，不能将 Web 端口直接对所有人开放。显式指定生产配置可恢复生产环境的 CSRF 防护；若显式开启 JWT，需提供至少 32 字符的 `JWT_SECRET_KEY`。
+默认配置为 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`；已有开发配置中的模式字段会自动规范为这三个值，原文件备份且密钥保留。这种模式不验证 JWT，且不启用 CSRF 请求校验；所有访问者共用一个账号，已有多账号数据库会使用最早创建的账号。必须用防火墙、VPN 或反向代理访问控制限制使用者，不能将 Web 端口直接对所有人开放。显式指定生产配置可恢复生产环境的 CSRF 防护；若显式开启 JWT，需提供至少 32 字符的 `JWT_SECRET_KEY`。
 
-它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。API 容器不存在时会自动创建，已有容器则更新；同名镜像不再被当作容器。删除容器后原数据卷仍在，首次切换开发配置会尝试从旧 `deploy/.env.production` 恢复密钥与 LLM 配置；若找不到原加密密钥，脚本会在构建前停止，不能随意生成新密钥。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
+它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。开发配置会在构建前和启动后分别核对 API 环境变量，确保实际运行的是开发单用户模式。API 容器不存在时会自动创建，已有容器则更新；同名镜像不再被当作容器。删除容器后原数据卷仍在，首次切换开发配置会尝试从旧 `deploy/.env.production` 恢复密钥与 LLM 配置；若找不到原加密密钥，脚本会在构建前停止，不能随意生成新密钥。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
 
 以下是供需要手动控制配置时使用的替代流程：
 

@@ -179,12 +179,14 @@ def main():
         raise ValueError(f"Deployment template not found: {source}")
     original = source.read_text()
     values = read_env(original)
+    updates = {}
     if env_path == ROOT / "deploy/.env.development":
         expected = {"APP_ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
         for key, value in expected.items():
             if values.get(key) != value:
-                raise ValueError(f"deploy/.env.development requires {key}={value}.")
-    updates = {}
+                values[key] = updates[key] = value
+        if any(key in updates for key in expected):
+            print("Prepared the single-user development profile; the previous env file will be backed up.", flush=True)
     if previous_profile:
         for key in ("LLM_PROVIDER", "LLM_MODEL", *KEYS.values()):
             if not missing(previous_profile.get(key)):
@@ -256,6 +258,12 @@ def main():
     config = json.loads(run(compose + ["config", "--format", "json"]).stdout)
     if set(config["services"]) != {"api", "web", "redis"}:
         raise ValueError("Unexpected additional services in deployment Compose file.")
+    if env_path == ROOT / "deploy/.env.development":
+        actual = config["services"]["api"].get("environment", {})
+        expected = {"ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
+        for key, value in expected.items():
+            if str(actual.get(key, "")).lower() != value:
+                raise ValueError(f"Docker Compose API environment must set {key}={value} before deployment.")
     if config["networks"]["default"]["name"] != PROJECT + "-network":
         raise ValueError("Unexpected network scope in deployment Compose file.")
     for service in ("api", "web", "redis"):
@@ -290,8 +298,16 @@ print('Real LLM request succeeded; configuration saved to Lumate data volume.')
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         states = json.loads(run(["docker", "container", "inspect", PROJECT + "-api", PROJECT + "-web", PROJECT + "-redis"]).stdout)
+        if env_path == ROOT / "deploy/.env.development":
+            running_env = dict(item.split("=", 1) for item in states[0]["Config"].get("Env", []) if "=" in item)
+            expected = {"ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
+            for key, value in expected.items():
+                if running_env.get(key, "").lower() != value:
+                    raise ValueError(f"Running API container does not have {key}={value}; deployment is not complete.")
         if all(s["State"].get("Health", {}).get("Status") == "healthy" for s in states):
             print("Deployment successful: API, Web and Redis are healthy. LLM settings survive restarts.")
+            if env_path == ROOT / "deploy/.env.development":
+                print("API deployment profile: ENVIRONMENT=development, AUTH_ENABLED=false, DEPLOYMENT_MODE=single_user.")
             return
         time.sleep(3)
     raise ValueError("Services did not become healthy within 180 seconds. Inspect Lumate logs; data volumes are preserved.")
