@@ -82,7 +82,10 @@ def write_env(path, original, updates):
 
 
 def inspect_api():
-    result = subprocess.run(["docker", "inspect", "lumate-customized-api"],
+    # Generic `docker inspect` also matches an image with this name.  After a
+    # container is deleted, that image has no State and must not be mistaken
+    # for an existing API container.
+    result = subprocess.run(["docker", "container", "inspect", "lumate-customized-api"],
                             text=True, capture_output=True, timeout=20)
     if result.returncode:
         return None
@@ -90,6 +93,12 @@ def inspect_api():
     if obj["Config"].get("Labels", {}).get("com.docker.compose.project") != PROJECT:
         raise ValueError("Existing lumate-customized-api belongs to another project.")
     return obj
+
+
+def data_volume_exists():
+    result = subprocess.run(["docker", "volume", "inspect", PROJECT + "_data"],
+                            text=True, capture_output=True, timeout=20)
+    return result.returncode == 0
 
 
 def validate(values):
@@ -135,10 +144,22 @@ def main():
     run(["docker", "compose", "version"])
     existing = inspect_api()
     previous = {}
+    # Switching an already deployed server from production to the default
+    # development profile must preserve the existing data encryption key even
+    # when the API container has been deleted.  Only read the old deployment
+    # profile for this first switch; never import a workstation's root .env.
+    previous_profile = {}
+    if env_path == ROOT / "deploy/.env.development" and not env_path.exists():
+        old_path = ROOT / "deploy/.env.production"
+        if old_path.is_symlink():
+            raise ValueError("Existing production env file must not be a symlink.")
+        if old_path.is_file():
+            previous_profile = read_env(old_path.read_text())
+            previous.update(previous_profile)
     if existing:
-        previous = dict(item.split("=", 1) for item in existing["Config"].get("Env", []) if "=" in item)
+        previous.update(item.split("=", 1) for item in existing["Config"].get("Env", []) if "=" in item)
     runtime = {}
-    if existing and existing["State"].get("Running"):
+    if existing and existing.get("State", {}).get("Running"):
         result = subprocess.run(["docker", "exec", "lumate-customized-api", "python", "-c",
             "import json; from dotenv import dotenv_values; print(json.dumps(dict(dotenv_values('/app/data/runtime.env', interpolate=False))))"],
             capture_output=True, text=True, timeout=20)
@@ -164,6 +185,10 @@ def main():
             if values.get(key) != value:
                 raise ValueError(f"deploy/.env.development requires {key}={value}.")
     updates = {}
+    if previous_profile:
+        for key in ("LLM_PROVIDER", "LLM_MODEL", *KEYS.values()):
+            if not missing(previous_profile.get(key)):
+                values[key] = updates[key] = previous_profile[key]
     # A legacy JWT key signed CSRF tokens before these secrets were separated.
     # Reuse it once when migrating an existing installation, so browser tokens
     # stay valid. JWT authentication itself is selected only by AUTH_ENABLED.
@@ -178,11 +203,16 @@ def main():
     values.setdefault("AUTH_ENABLED", "false")
     values.setdefault("DEPLOYMENT_MODE", "single_user")
     for key in ("ENCRYPTION_KEY", "CORS_ORIGINS"):
-        if missing(values.get(key)) and not missing(previous.get(key)):
+        if (missing(values.get(key)) or (key == "CORS_ORIGINS" and values.get(key) == "http://localhost:3003")) and not missing(previous.get(key)):
             values[key] = updates[key] = previous[key]
         elif key != "CORS_ORIGINS" and not missing(previous.get(key)) and values.get(key) != previous[key]:
             raise ValueError(f"{key} differs from the running Lumate container. Reconcile the existing key before deploying.")
     if missing(values.get("ENCRYPTION_KEY")):
+        if data_volume_exists():
+            raise ValueError(
+                "Lumate data volume exists but no ENCRYPTION_KEY was found. "
+                "Restore the original key in the selected deploy env file before continuing."
+            )
         values["ENCRYPTION_KEY"] = updates["ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
     if missing(values.get("CORS_ORIGINS")) or values.get("CORS_ORIGINS") == "http://localhost:3003":
         origin = input("Public origin (e.g. https://learn.example.com): ").strip()
@@ -259,7 +289,7 @@ print('Real LLM request succeeded; configuration saved to Lumate data volume.')
     run(compose + ["up", "-d", "--no-build"], capture=False, timeout=240)
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
-        states = json.loads(run(["docker", "inspect", PROJECT + "-api", PROJECT + "-web", PROJECT + "-redis"]).stdout)
+        states = json.loads(run(["docker", "container", "inspect", PROJECT + "-api", PROJECT + "-web", PROJECT + "-redis"]).stdout)
         if all(s["State"].get("Health", {}).get("Status") == "healthy" for s in states):
             print("Deployment successful: API, Web and Redis are healthy. LLM settings survive restarts.")
             return

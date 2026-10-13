@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import json
 import os
 from pathlib import Path
@@ -45,13 +46,58 @@ class DeploymentTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, json.dumps(states), '')
         return subprocess.CompletedProcess(args, 0, '', '')
 
-    def execute(self, env_file=None):
+    def execute(self, env_file=None, *, existing=None, volume_exists=False):
         argv = ['deploy'] + (['--env-file', str(env_file)] if env_file else [])
         with patch.object(deploy, 'ROOT', self.root), patch.object(deploy, 'DEFAULT_ENV', self.root / 'deploy/.env.development'), \
-             patch.object(deploy, 'inspect_api', return_value=None), patch.object(deploy, 'run', side_effect=self.run_mock), \
+             patch.object(deploy, 'inspect_api', return_value=existing), patch.object(deploy, 'data_volume_exists', return_value=volume_exists), \
+             patch.object(deploy, 'run', side_effect=self.run_mock), \
              patch('builtins.input', return_value='https://learn.example.com'), patch.object(deploy.getpass, 'getpass', return_value='test-key'), \
              patch.object(deploy.sys, 'argv', argv), patch.object(deploy.sys.stdin, 'isatty', return_value=True), patch.dict(os.environ):
             deploy.main()
+
+    def test_container_lookup_does_not_match_same_named_image(self):
+        result = subprocess.CompletedProcess([], 1, '', 'No such container')
+        with patch.object(deploy.subprocess, 'run', return_value=result) as run:
+            self.assertIsNone(deploy.inspect_api())
+        self.assertEqual(run.call_args.args[0],
+                         ['docker', 'container', 'inspect', 'lumate-customized-api'])
+
+    def test_deleted_container_recovers_keys_from_previous_profile(self):
+        encryption_key = base64.urlsafe_b64encode(b'a' * 32).decode()
+        (self.root / 'deploy/.env.production').write_text(
+            'APP_ENVIRONMENT=production\nCSRF_SECRET_KEY=' + 'c' * 64 +
+            '\nENCRYPTION_KEY=' + encryption_key +
+            '\nCORS_ORIGINS=https://learn.example.com\nLLM_PROVIDER=deepseek\n'
+            'LLM_MODEL=deepseek-chat\nDEEPSEEK_API_KEY=existing-key\n')
+        self.execute(volume_exists=True)
+        profile = deploy.read_env((self.root / 'deploy/.env.development').read_text())
+        self.assertEqual(profile['ENCRYPTION_KEY'], encryption_key)
+        self.assertEqual(profile['CSRF_SECRET_KEY'], 'c' * 64)
+        self.assertEqual(profile['DEEPSEEK_API_KEY'], 'existing-key')
+        self.assertEqual(profile['CORS_ORIGINS'], 'https://learn.example.com')
+        self.assertTrue(any('up' in call for call in self.calls))
+
+    def test_deleted_container_with_data_but_no_key_stops_safely(self):
+        with self.assertRaisesRegex(ValueError, 'data volume exists but no ENCRYPTION_KEY'):
+            self.execute(volume_exists=True)
+        self.assertFalse(any('build' in call for call in self.calls))
+
+    def test_existing_stopped_container_updates_in_place(self):
+        encryption_key = base64.urlsafe_b64encode(b'b' * 32).decode()
+        existing = {
+            'Config': {'Env': [
+                'CSRF_SECRET_KEY=' + 'd' * 64,
+                'ENCRYPTION_KEY=' + encryption_key,
+                'CORS_ORIGINS=https://learn.example.com',
+                'DEEPSEEK_API_KEY=existing-key',
+            ]},
+            'State': {'Running': False},
+        }
+        self.execute(existing=existing, volume_exists=True)
+        profile = deploy.read_env((self.root / 'deploy/.env.development').read_text())
+        self.assertEqual(profile['ENCRYPTION_KEY'], encryption_key)
+        self.assertEqual(profile['CSRF_SECRET_KEY'], 'd' * 64)
+        self.assertTrue(any('up' in call for call in self.calls))
 
     def test_fresh_deployment_and_repeat_preserves_secrets(self):
         self.execute()

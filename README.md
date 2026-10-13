@@ -55,6 +55,8 @@ sudo sh scripts/deploy.sh
 7. 使用新 API 镜像发起一次真实 LLM 请求。成功后将 LLM 配置写入 Lumate 持久化数据卷。
 8. 启动三个服务，最多等待 180 秒，全部健康后才报告部署成功。
 
+部署程序会区分容器和同名镜像：Lumate 容器不存在时自动创建，存在时按所选配置更新。删除容器不会删除命名数据卷；首次从旧生产配置切换到开发配置时，脚本会尝试从 `deploy/.env.production` 恢复原加密密钥与 LLM 配置。如果数据卷仍在却无法找到原加密密钥，脚本会停止并提示恢复密钥，避免用新密钥覆盖旧数据。
+
 LLM 测试会消耗少量 API 额度。构建失败或 LLM 测试失败时脚本会退出，尚未执行切换在线服务的 `up` 操作。切换之后若服务未健康，脚本会报错，需要查看日志；它不自动回滚镜像。
 
 脚本不会执行 Git 命令或修改被 Git 跟踪的源码，因此重复部署不会由脚本自身产生源码修改冲突。
@@ -156,6 +158,8 @@ docker compose --project-name lumate-customized --env-file deploy/.env.developme
 | 提示缺少配置 | 使用新 `scripts/deploy.sh`，它会自动准备开发配置；确认拉取更新成功。 |
 | `ENCRYPTION_KEY` 缺失 | 新部署程序会生成或复用正在运行容器的密钥；格式无效或不一致时需要核对已有配置。 |
 | `CSRF_SECRET_KEY must be at least 32 characters` | 使用新部署脚本生成并持久化 CSRF 密钥；手动部署时需自行设置。仅显式开启 JWT 时才需要 `JWT_SECRET_KEY`。 |
+| 删除 API 容器后出现 `KeyError: 'State'` | 更新到包含容器识别修复的脚本；旧脚本把同名镜像误识别为容器。不要删除数据卷。 |
+| 提示数据卷存在但找不到 `ENCRYPTION_KEY` | 从旧 `deploy/.env.production` 或安全备份恢复原密钥到当前部署配置；不要新生成密钥。 |
 | 开发模式下仍提示无权限 | 检查 API 容器中的 `ENVIRONMENT`、`AUTH_ENABLED`、`DEPLOYMENT_MODE` 是否分别为 `development`、`false`、`single_user`；若返回 403，查看 API 日志中的实际错误码。 |
 | `PermissionError: /app/.env` | 使用新版本重新构建部署；Compose 应传入 `LOCAL_ENV_FILE=/app/data/runtime.env`。 |
 | LLM 测试失败 | 检查 Key、余额、供应商对应模型名以及服务器的 DNS、TLS 与网络出口；用 `--configure` 重新设置。 |

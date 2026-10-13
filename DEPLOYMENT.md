@@ -33,7 +33,7 @@ sudo sh scripts/deploy.sh
 
 默认配置为 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`。这种模式不验证 JWT，且不启用 CSRF 请求校验；所有访问者共用一个账号，已有多账号数据库会使用最早创建的账号。必须用防火墙、VPN 或反向代理访问控制限制使用者，不能将 Web 端口直接对所有人开放。显式指定生产配置可恢复生产环境的 CSRF 防护；若显式开启 JWT，需提供至少 32 字符的 `JWT_SECRET_KEY`。
 
-它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
+它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。API 容器不存在时会自动创建，已有容器则更新；同名镜像不再被当作容器。删除容器后原数据卷仍在，首次切换开发配置会尝试从旧 `deploy/.env.production` 恢复密钥与 LLM 配置；若找不到原加密密钥，脚本会在构建前停止，不能随意生成新密钥。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
 
 以下是供需要手动控制配置时使用的替代流程：
 
@@ -112,3 +112,5 @@ docker run --rm -v lumate-customized_uploads:/data -v "$PWD":/backup alpine \
 - **上传大 PDF 失败**：确认 `MAX_UPLOAD_SIZE_MB`，同时保证反向代理的请求体限制不小于该值。内置 Next.js 代理已将上限设为 550 MB。
 - **代码运行题不可用**：确认 Docker socket 路径和 `CODE_SANDBOX_BACKEND=container`；不要在生产环境随意开启 `ALLOW_INSECURE_PROCESS_SANDBOX=true`。
 - **页面能打开但 API 失败**：检查 `CORS_ORIGINS` 是否精确包含当前浏览器地址，并确认 `api` 健康检查为 `healthy`。
+- **容器删除后 `KeyError: 'State'`**：旧脚本的通用 `docker inspect` 误读了同名镜像。更新脚本后重新运行 `sudo sh scripts/deploy.sh --env-file deploy/.env.development`；不要删除数据卷。
+- **数据卷存在但找不到 `ENCRYPTION_KEY`**：从旧部署配置或备份恢复原密钥，再运行脚本；新密钥不能解密旧数据。
