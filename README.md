@@ -2,7 +2,7 @@
 
 Lumate 是一个基于学习资料的 AI 学习助手，支持教材上传、学习空间、AI 对话、练习、笔记、复习与学习进度。前端使用 Next.js，后端使用 FastAPI，数据存储使用 SQLite，后台任务使用 Redis。
 
-仓库：[Xian1029/lumate](https://github.com/Xian1029/lumate)。本文说明 Linux 服务器上的生产部署。生产部署调用云端 LLM API，无须在服务器部署大模型。
+仓库：[Xian1029/lumate](https://github.com/Xian1029/lumate)。本文说明 Linux 服务器上的隔离部署。默认以开发环境、单用户模式运行，调用云端 LLM API，无须在服务器部署大模型。
 
 ## 部署准备
 
@@ -10,7 +10,7 @@ Lumate 是一个基于学习资料的 AI 学习助手，支持教材上传、学
 
 少量用户使用可从 4 vCPU、8 GB 内存、50 GB SSD 起步。PDF 解析和 OCR 会占用 CPU 与内存，教材文件、Docker 镜像及备份会持续占用磁盘；这些规格是容量起点，不代表已经压测的并发保证。
 
-准备一个云端 LLM 供应商的有效 API Key、模型名，以及浏览器访问的公网地址，例如 `https://learn.example.com`。公网使用时应配置域名和 HTTPS 反向代理。
+准备一个云端 LLM 供应商的有效 API Key、模型名，以及浏览器访问地址。默认开发模式关闭 JWT 登录和 CSRF 请求校验；即使使用 HTTPS，也必须先通过防火墙、VPN 或反向代理访问控制限制使用者，不要把 `3003` 端口直接公开给所有人。若以后改用生产配置，应使用 HTTPS 域名，例如 `https://learn.example.com`。
 
 确认工具可用：
 
@@ -23,7 +23,7 @@ git --version
 
 使用有 Docker 权限的账户运行；下面以服务器管理员为例。
 
-## 首次部署：一个 sh 命令
+## 首次部署：默认开发环境、单用户
 
 先获取代码：
 
@@ -40,17 +40,17 @@ sudo sh scripts/deploy.sh
 
 `deploy.sh` 调用项目内的 Python 标准库部署程序，无须为部署程序安装 Python 包。旧入口 `scripts/fix_llm_persistence.sh` 已移除。
 
-可传入另一份环境配置：`sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。路径相对于仓库根目录；默认仍使用 `deploy/.env.production`。每份文件可分别设置 `APP_ENVIRONMENT`、`AUTH_ENABLED` 和 `DEPLOYMENT_MODE`。不同配置文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。
+无参数时使用 `deploy/.env.development`（首次从 `deploy/.env.development.example` 创建），并校验 `APP_ENVIRONMENT=development`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`。仍可沿用之前的方式传入另一份配置：`sudo sh scripts/deploy.sh --env-file deploy/.env.production` 或 `sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。路径相对于仓库根目录；除内置的开发与生产示例外，自定义配置文件须先创建。不同配置文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。
 
-默认生产配置关闭 JWT 登录（`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`），所有访问者共用同一个账号；已有多账号数据库会使用最早创建的账号。任何能打开 Web 地址的人都能查看或修改该账号的学习数据，公网使用时请在反向代理或网络层限制访问。若配置文件显式开启 JWT，仍须设置至少 32 字符的 `JWT_SECRET_KEY`。
+默认开发配置关闭 JWT 登录与 CSRF 校验，所有访问者共用一个账号；已有多账号数据库会使用最早创建的账号。任何能打开 Web 地址的人都能查看或修改该账号的学习数据。生产配置仍保留单用户与 CSRF 防护；若配置文件显式开启 JWT，仍须设置至少 32 字符的 `JWT_SECRET_KEY`。
 
 脚本自动完成以下步骤：
 
 1. 检查 Docker Engine 和 Compose 是否可用，并核对现有 Lumate 容器归属。
-2. 优先读取 `deploy/.env.production`；没有时读取旧根目录 `.env`；两者均不存在时使用生产配置示例。
-3. 为 CSRF 请求防护生成或复用独立签名密钥。Fernet 加密密钥缺失时生成；已有加密密钥格式无效或与容器不一致时停止核对。
+2. 默认读取 `deploy/.env.development`；没有时使用开发配置示例。显式传入生产文件时使用 `deploy/.env.production` 或生产示例。不会读取根目录的本地 `.env` 作为服务器部署配置。
+3. 生成或复用 CSRF 签名密钥（开发模式下保留密钥，但不加载 CSRF 中间件）。Fernet 加密密钥缺失时生成；已有加密密钥格式无效或与容器不一致时停止核对。
 4. 按需要提示输入公网地址、云端模型与 API Key。API Key 使用隐藏输入。
-5. 原子保存权限为 `600` 的生产配置，并为已有生产文件创建独立备份。
+5. 原子保存权限为 `600` 的所选配置，并为已有配置文件创建独立备份。
 6. 校验 Compose 的容器和数据卷命名，构建 API 与 Web 镜像。
 7. 使用新 API 镜像发起一次真实 LLM 请求。成功后将 LLM 配置写入 Lumate 持久化数据卷。
 8. 启动三个服务，最多等待 180 秒，全部健康后才报告部署成功。
@@ -74,7 +74,7 @@ LLM 测试会消耗少量 API 额度。构建失败或 LLM 测试失败时脚本
 | Web 端口 | `3003` |
 | API 地址 | `127.0.0.1:8001` |
 
-前端默认可通过 `http://服务器地址:3003` 访问。生产域名通过反向代理转发到 Web 端口；`CORS_ORIGINS` 应与浏览器访问的地址匹配，包括协议与非默认端口。
+前端默认监听 `3003`。开发模式在公网使用前务必限制访问来源；生产域名通过 HTTPS 反向代理转发到 Web 端口。`CORS_ORIGINS` 应与浏览器访问的地址匹配，包括协议与非默认端口。
 
 这些资源独立于原有 `opentutor-*` 服务。若端口已被其他服务占用，在生产配置中修改 `WEB_PORT` 或 `API_PORT` 后重新部署。
 
@@ -122,29 +122,29 @@ sudo sh scripts/deploy.sh
 以下命令在仓库根目录运行，使用与部署程序相同的项目和生产文件：
 
 ```sh
-docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml ps
+docker compose --project-name lumate-customized --env-file deploy/.env.development -f docker-compose.deploy.yml ps
 
-docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml logs --tail=100 api web redis
+docker compose --project-name lumate-customized --env-file deploy/.env.development -f docker-compose.deploy.yml logs --tail=100 api web redis
 
 curl -fsS http://127.0.0.1:8001/api/health/live
 ```
 
-如果修改过 `API_PORT`，健康检查使用对应端口。不要公开整个 `.env.production`、Docker `inspect` 输出或 Compose 展开配置，它们可能包含密钥。
+如果修改过 `API_PORT`，健康检查使用对应端口。显式使用其他配置文件时，上述命令的 `--env-file` 也要同步更换。不要公开配置文件、Docker `inspect` 输出或 Compose 展开配置，它们可能包含密钥。
 
 ## 备份与停止
 
-至少备份生产配置、SQLite 数据库、运行时 LLM 文件和上传教材。`deploy/.env.production` 内的加密密钥也必须保留；随意替换会使此前加密保存的数据无法解密。
+至少备份当前使用的配置文件、SQLite 数据库、运行时 LLM 文件和上传教材。配置文件内的加密密钥必须保留；随意替换会使此前加密保存的数据无法解密。
 
 数据库与上传文件需要一致的备份时，先停止 Lumate 写入：
 
 ```sh
-docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml stop api web
+docker compose --project-name lumate-customized --env-file deploy/.env.development -f docker-compose.deploy.yml stop api web
 ```
 
 然后备份 `lumate-customized_data` 与 `lumate-customized_uploads` 命名卷，具体示例见 [DEPLOYMENT.md](DEPLOYMENT.md)。完成后重新启动：
 
 ```sh
-docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml start api web
+docker compose --project-name lumate-customized --env-file deploy/.env.development -f docker-compose.deploy.yml start api web
 ```
 
 不要执行带 `-v` 的 `docker compose down`，它会删除命名卷。旧脚本源码已由 Git 历史保留，运行中的学习数据由命名卷保留。
@@ -153,9 +153,10 @@ docker compose --project-name lumate-customized --env-file deploy/.env.productio
 
 | 现象 | 处理方式 |
 | --- | --- |
-| 提示缺少生产配置 | 使用新 `scripts/deploy.sh`，它会自动准备文件；确认拉取更新成功。 |
+| 提示缺少配置 | 使用新 `scripts/deploy.sh`，它会自动准备开发配置；确认拉取更新成功。 |
 | `ENCRYPTION_KEY` 缺失 | 新部署程序会生成或复用正在运行容器的密钥；格式无效或不一致时需要核对已有配置。 |
 | `CSRF_SECRET_KEY must be at least 32 characters` | 使用新部署脚本生成并持久化 CSRF 密钥；手动部署时需自行设置。仅显式开启 JWT 时才需要 `JWT_SECRET_KEY`。 |
+| 开发模式下仍提示无权限 | 检查 API 容器中的 `ENVIRONMENT`、`AUTH_ENABLED`、`DEPLOYMENT_MODE` 是否分别为 `development`、`false`、`single_user`；若返回 403，查看 API 日志中的实际错误码。 |
 | `PermissionError: /app/.env` | 使用新版本重新构建部署；Compose 应传入 `LOCAL_ENV_FILE=/app/data/runtime.env`。 |
 | LLM 测试失败 | 检查 Key、余额、供应商对应模型名以及服务器的 DNS、TLS 与网络出口；用 `--configure` 重新设置。 |
 | 构建失败 | 检查构建输出、磁盘、内存，以及 Docker/npm/Python 包源的网络访问。 |

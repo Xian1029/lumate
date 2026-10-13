@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "lumate-customized"
-PROD = ROOT / "deploy/.env.production"
+DEFAULT_ENV = ROOT / "deploy/.env.development"
 KEYS = {p: p.upper() + "_API_KEY" for p in
         ("deepseek", "openai", "anthropic", "openrouter", "gemini", "groq")}
 
@@ -123,10 +123,10 @@ def validate(values):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configure", action="store_true", help="prompt to change cloud LLM provider/model/key")
-    parser.add_argument("--env-file", type=Path, help="deployment env file (default: deploy/.env.production)")
+    parser.add_argument("--env-file", type=Path, help="deployment env file (default: deploy/.env.development)")
     options = parser.parse_args()
     os.chdir(ROOT)
-    env_path = options.env_file or PROD
+    env_path = options.env_file or DEFAULT_ENV
     if not env_path.is_absolute():
         env_path = ROOT / env_path
     if env_path.is_symlink():
@@ -144,11 +144,25 @@ def main():
             capture_output=True, text=True, timeout=20)
         if result.returncode == 0:
             runtime = json.loads(result.stdout)
-    source = env_path if env_path.exists() else ROOT / ".env"
-    if not source.exists():
+    # Never borrow the repository's local .env for a server deployment. The
+    # selected profile must start from its own template when first created.
+    if env_path.exists():
+        source = env_path
+    elif env_path == ROOT / "deploy/.env.development":
+        source = ROOT / "deploy/.env.development.example"
+    elif env_path == ROOT / "deploy/.env.production":
         source = ROOT / "deploy/.env.production.example"
+    else:
+        raise ValueError("Deployment env file does not exist; copy an example profile first.")
+    if not source.exists():
+        raise ValueError(f"Deployment template not found: {source}")
     original = source.read_text()
     values = read_env(original)
+    if env_path == ROOT / "deploy/.env.development":
+        expected = {"APP_ENVIRONMENT": "development", "AUTH_ENABLED": "false", "DEPLOYMENT_MODE": "single_user"}
+        for key, value in expected.items():
+            if values.get(key) != value:
+                raise ValueError(f"deploy/.env.development requires {key}={value}.")
     updates = {}
     # A legacy JWT key signed CSRF tokens before these secrets were separated.
     # Reuse it once when migrating an existing installation, so browser tokens

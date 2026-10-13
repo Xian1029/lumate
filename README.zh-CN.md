@@ -88,7 +88,7 @@ cd apps/web && npm install && npm run dev
 
 </details>
 
-> **安全提示：** 默认关闭认证，仅用于本地单用户。网络部署前请设置 `AUTH_ENABLED=true` 并配置 `JWT_SECRET_KEY`。详见 [SECURITY.md](SECURITY.md)。
+> **安全提示：** 默认部署配置是开发环境单用户模式，关闭 JWT 登录与 CSRF 请求校验。任何能访问 Web 端口的人都能查看和修改共享数据；服务器使用前必须通过防火墙、VPN 或反向代理限制访问。需要生产模式可显式运行 `sudo sh scripts/deploy.sh --env-file deploy/.env.production`。详见 [SECURITY.md](SECURITY.md)。
 
 ## 功能特性
 
