@@ -23,6 +23,18 @@
 
 ## 首次部署
 
+Linux 推荐单命令部署（需要 Docker Engine、Compose v2 和 Python 3）：
+
+```sh
+sudo sh scripts/deploy.sh
+```
+
+脚本优先读取已有 `deploy/.env.production`，其次读取根目录 `.env`，均不存在时使用示例配置。配置原子保存为权限 `600` 的生产文件，保留旧文件备份。已有生产密钥会复用；缺失的 JWT 和 Fernet 密钥会生成，已有密钥格式错误或与运行容器不一致时会停止。缺少公网域名、模型名或 API Key 时会提示输入，API Key 隐藏输入。
+
+它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
+
+以下是供需要手动控制配置时使用的替代流程：
+
 ```bash
 cp deploy/.env.production.example deploy/.env.production
 
@@ -42,15 +54,15 @@ docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|o
 
 如果 API 日志出现 `sqlite3.OperationalError: unable to open database file`，请拉取包含数据卷权限修复的最新代码后，重新执行上面的 `up -d --build`。镜像会自动修复 Lumate 专用数据卷的权限；不要删除或重命名任何 `opentutor-*` 容器、网络或数据卷。
 
-### 修复并持久化云端 LLM 配置
+### 更新或重新配置云端 LLM
 
-如果在设置页保存云端 LLM 的 API Key 时出现 `PermissionError: /app/.env`，在 Lumate 仓库根目录执行以下单个命令：
+更新代码成功后重复运行部署脚本即可；需要更换模型供应商或 API Key 时：
 
 ```bash
-sudo sh scripts/fix_llm_persistence.sh
+sudo sh scripts/deploy.sh --configure
 ```
 
-脚本会构建并重启 `lumate-customized` 服务，隐藏输入 API Key，将运行时 LLM 配置保存到 Lumate 专用数据卷，并检查 provider 健康状态。它优先使用 `deploy/.env.production`；旧部署若只有仓库根目录 `.env`，会以权限 `600` 创建生产配置副本。若缺少 `JWT_SECRET_KEY` 或 `ENCRYPTION_KEY`，脚本会自动生成并持久化；缺少 `CORS_ORIGINS` 时才会要求输入公网 HTTPS 域名。最后会在构建前验证 Compose 配置，避免因缺少密钥或域名配置而中途切换服务。它不会修改任何 `opentutor-*` 容器、网络或数据卷。
+设置页保存的运行时 LLM 配置写入 `/app/data/runtime.env`，保存在 `lumate-customized_data` 卷中，容器重建后自动加载。旧脚本 `fix_llm_persistence.sh` 已移除。所有 Docker 操作仅属于 `lumate-customized`，不操作 `opentutor-*` 服务。若之前的旧脚本造成 Git 本地修改，先用 `git status` 检查并保留修改再拉取；不要把旧脚本恢复到新版上。
 
 `deploy/.env.production` 只存在于部署主机，不要提交到 Git。首次启动会创建数据库表和系统初始数据；之后可将 `APP_AUTO_CREATE_TABLES` 与 `APP_AUTO_SEED_SYSTEM` 改为 `false`，再执行 `docker compose ... up -d`。
 

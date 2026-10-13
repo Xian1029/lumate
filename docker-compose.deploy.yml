@@ -61,6 +61,7 @@ services:
       APP_RUN_ACTIVITY_ENGINE: ${APP_RUN_ACTIVITY_ENGINE:-true}
       AMBIENT_MONITOR_ENABLED: ${AMBIENT_MONITOR_ENABLED:-true}
       UPLOAD_DIR: /app/uploads
+      LOCAL_ENV_FILE: /app/data/runtime.env
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-500}
       EMBEDDING_MODE: ${EMBEDDING_MODE:-auto}
       CODE_SANDBOX_BACKEND: ${CODE_SANDBOX_BACKEND:-container}
@@ -102,7 +103,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/ > /dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12

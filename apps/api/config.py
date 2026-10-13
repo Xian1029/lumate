@@ -287,4 +287,18 @@ class Settings(BaseSettings):
     )
 
 
+# Runtime persistence only overrides LLM fields, never deployment security.
+_runtime_file = os.environ.get("LOCAL_ENV_FILE", "")
+if _runtime_file:
+    from dotenv import dotenv_values
+    _runtime_keys = {
+        "LLM_PROVIDER", "LLM_MODEL", "LLM_REQUIRED", "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY", "GROQ_API_KEY", "OLLAMA_BASE_URL", "VLLM_BASE_URL",
+        "LMSTUDIO_BASE_URL", "TEXTGENWEBUI_BASE_URL",
+    }
+    for _key, _value in dotenv_values(_runtime_file, interpolate=False).items():
+        if _key in _runtime_keys and _value is not None:
+            os.environ[_key] = _value
+
 settings = Settings()

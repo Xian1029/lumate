@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from dotenv import dotenv_values, set_key, unset_key
+from dotenv import dotenv_values, set_key
 
 from config import settings
 from services.llm import router as llm_router
@@ -122,7 +122,9 @@ def get_llm_runtime_config() -> dict[str, Any]:
 
 def update_llm_runtime_config(payload: dict[str, Any]) -> dict[str, Any]:
     env_path = _env_path()
-    env_path.touch(exist_ok=True)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.touch(mode=0o600, exist_ok=True)
+    env_path.chmod(0o600)
 
     updates: dict[str, Any] = {}
     if "provider" in payload:
@@ -154,10 +156,11 @@ def update_llm_runtime_config(payload: dict[str, Any]) -> dict[str, Any]:
     for field, value in updates.items():
         env_name = LLM_ENV_FIELDS[field]
         if value == "":
-            unset_key(env_path, env_name, quote_mode="never")
+            # Explicit clearing must survive Compose defaults on restart.
+            set_key(env_path, env_name, "", quote_mode="always")
         else:
             serialized = "true" if value is True else "false" if value is False else str(value)
-            set_key(env_path, env_name, serialized, quote_mode="never")
+            set_key(env_path, env_name, serialized, quote_mode="always")
         _apply_runtime_setting(field, value)
 
     _refresh_llm_registry()

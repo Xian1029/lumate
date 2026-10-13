@@ -1,310 +1,169 @@
-<div align="center">
-
-<img src="https://img.icons8.com/3d-fluency/94/graduation-cap.png" alt="Lumate Logo" width="80" />
-
 # Lumate
 
-**The first block-based adaptive learning workspace that runs locally.**
+Lumate 是一个基于学习资料的 AI 学习助手，支持教材上传、学习空间、AI 对话、练习、笔记、复习与学习进度。前端使用 Next.js，后端使用 FastAPI，数据存储使用 SQLite，后台任务使用 Redis。
 
-Drop in a PDF. Get an AI tutor that actually adapts to how *you* learn.
+仓库：[Xian1029/lumate](https://github.com/Xian1029/lumate)。本文说明 Linux 服务器上的生产部署。生产部署调用云端 LLM API，无须在服务器部署大模型。
 
-[![License](https://img.shields.io/github/license/Xian1029/lumate?style=flat-square&labelColor=black)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white&labelColor=black)](https://www.python.org/)
-[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white&labelColor=black)](https://nextjs.org/)
-[![Docker](https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white&labelColor=black)](https://www.docker.com/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square&labelColor=black)](CONTRIBUTING.md)
+## 部署准备
 
-**English** | [中文](./README.zh-CN.md)
+服务器需要安装 Docker Engine、Docker Compose v2、Python 3 和 Git。首次部署和更新均需要能下载 Docker 镜像、npm 与 Python 依赖，并能访问所选 LLM 的 API。
 
-</div>
+少量用户使用可从 4 vCPU、8 GB 内存、50 GB SSD 起步。PDF 解析和 OCR 会占用 CPU 与内存，教材文件、Docker 镜像及备份会持续占用磁盘；这些规格是容量起点，不代表已经压测的并发保证。
 
-<!-- TODO: Replace with demo GIF once recorded -->
-<!-- <p align="center"><img src="docs/assets/demo.gif" alt="Lumate demo — upload PDF, get adaptive workspace" width="800" /></p> -->
+准备一个云端 LLM 供应商的有效 API Key、模型名，以及浏览器访问的公网地址，例如 `https://learn.example.com`。公网使用时应配置域名和 HTTPS 反向代理。
 
-<p align="center"><img src="docs/assets/demo-workspace-full.png" alt="Lumate — block-based adaptive workspace with chapters, notes, quiz, knowledge graph, and progress tracking" width="800" /></p>
+确认工具可用：
 
-## The Problem
-
-Every AI learning tool we tried had the same issue: they treat every student the same way. Same explanations. Same pace. Same questions. And they all require sending your data to the cloud.
-
-## The Solution
-
-Lumate is a **self-hosted, local-first** AI learning platform. Upload your course material, and within 30 seconds you get structured notes, flashcards, quizzes, and an AI tutor — all running on your machine, completely free.
-
-What makes it different:
-
-- **Block-based workspace** that reshapes itself based on how you learn
-- **Runs locally** with open-source LLMs — no API keys required, no data leaves your machine
-- **Grounded in learning science** — FSRS spaced repetition, knowledge graphs, cognitive load detection
-
-```
-Upload → AI Teaches → You Practice → AI Remembers → AI Reminds → Repeat
+```sh
+docker info
+docker compose version
+python3 --version
+git --version
 ```
 
-## Quick Start
+使用有 Docker 权限的账户运行；下面以服务器管理员为例。
 
-### 3 commands. That's it.
+## 首次部署：一个 sh 命令
 
-```bash
-git clone https://github.com/Xian1029/lumate.git && cd lumate
-cp .env.example .env
-docker compose up -d --build
+先获取代码：
+
+```sh
+git clone https://github.com/Xian1029/lumate.git
+cd lumate
 ```
 
-Open [http://localhost:3001](http://localhost:3001). Done.
+执行新的部署入口：
 
-> No Docker? Use `bash scripts/quickstart.sh` instead — it handles Python venv, npm install, DB setup, and starts both servers.
-
-### Repair persistent cloud LLM settings (single command)
-
-For an existing Linux production deployment where saving an LLM key in the UI
-fails with `PermissionError: /app/.env`, run the following from the Lumate
-repository as root (or through `sudo`):
-
-```bash
-sudo sh scripts/fix_llm_persistence.sh
+```sh
+sudo sh scripts/deploy.sh
 ```
 
-The script rebuilds only the `lumate-customized` stack, prompts for the cloud
-LLM provider, model, and API key without echoing the key, then verifies provider
-health. Runtime settings are persisted in the Lumate data volume and survive
-container restarts. It does not modify `opentutor-*` containers, networks, or
-volumes. If the production file is missing, it securely creates
-`deploy/.env.production` from a legacy root `.env`, generates missing JWT and
-encryption keys, and asks for `CORS_ORIGINS` only when required. It validates
-the Compose configuration before rebuilding. See [DEPLOYMENT.md](DEPLOYMENT.md)
-for the production prerequisites.
+`deploy.sh` 调用项目内的 Python 标准库部署程序，无须为部署程序安装 Python 包。旧入口 `scripts/fix_llm_persistence.sh` 已移除。
 
-### One-Click Cloud Deploy
+脚本自动完成以下步骤：
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Xian1029/lumate)
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template?referralCode=lumate&repo=https://github.com/Xian1029/lumate)
+1. 检查 Docker Engine 和 Compose 是否可用，并核对现有 Lumate 容器归属。
+2. 优先读取 `deploy/.env.production`；没有时读取旧根目录 `.env`；两者均不存在时使用生产配置示例。
+3. 复用已有生产 JWT、Fernet 密钥；缺失时生成。已有密钥格式无效或与正在运行的 Lumate 容器不一致时停止，避免意外替换密钥。
+4. 按需要提示输入公网地址、云端模型与 API Key。API Key 使用隐藏输入。
+5. 原子保存权限为 `600` 的生产配置，并为已有生产文件创建独立备份。
+6. 校验 Compose 的容器和数据卷命名，构建 API 与 Web 镜像。
+7. 使用新 API 镜像发起一次真实 LLM 请求。成功后将 LLM 配置写入 Lumate 持久化数据卷。
+8. 启动三个服务，最多等待 180 秒，全部健康后才报告部署成功。
 
-<details>
-<summary><strong>Manual setup (without Docker)</strong></summary>
+LLM 测试会消耗少量 API 额度。构建失败或 LLM 测试失败时脚本会退出，尚未执行切换在线服务的 `up` 操作。切换之后若服务未健康，脚本会报错，需要查看日志；它不自动回滚镜像。
 
-```bash
-# Backend
-cd apps/api
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-core.txt
-python -m uvicorn main:app --port 8000
+脚本不会执行 Git 命令或修改被 Git 跟踪的源码，因此重复部署不会由脚本自身产生源码修改冲突。
 
-# Frontend (separate terminal)
-cd apps/web && npm install && npm run dev
+## 访问与隔离
 
-For a stable local run (recommended when you are using the product rather than editing code), run this from the project root:
+| 资源 | 默认值 |
+| --- | --- |
+| Compose 项目 | `lumate-customized` |
+| API 容器 | `lumate-customized-api` |
+| Web 容器 | `lumate-customized-web` |
+| Redis 容器 | `lumate-customized-redis` |
+| 网络 | `lumate-customized-network` |
+| 数据卷 | `lumate-customized_data` |
+| 上传卷 | `lumate-customized_uploads` |
+| Redis 卷 | `lumate-customized_redis` |
+| Web 端口 | `3003` |
+| API 地址 | `127.0.0.1:8001` |
 
-```bash
-bash scripts/start_local_stable.sh
-```
-```
+前端默认可通过 `http://服务器地址:3003` 访问。生产域名通过反向代理转发到 Web 端口；`CORS_ORIGINS` 应与浏览器访问的地址匹配，包括协议与非默认端口。
 
-Visit [http://localhost:3001](http://localhost:3001).
+这些资源独立于原有 `opentutor-*` 服务。若端口已被其他服务占用，在生产配置中修改 `WEB_PORT` 或 `API_PORT` 后重新部署。
 
-</details>
+只需暴露 Web 端口。API 的 `/api/*` 请求由 Next.js 代理；Redis 不发布到公网。部署程序不会安装或修改 Nginx、域名解析、防火墙或证书，需要运维人员准备这些设置。
 
-<details>
-<summary><strong>Platform support</strong></summary>
+## 云端 LLM 与持久化
 
-| Platform | Status |
-|---|---|
-| macOS (Apple Silicon / Intel) | Supported |
-| Linux (Ubuntu 22.04+) | Supported |
-| Windows | Community-supported |
+部署程序支持 `deepseek`、`openai`、`anthropic`、`openrouter`、`gemini`、`groq`。DeepSeek 的示例模型为 `deepseek-chat`；其他供应商请输入账户实际可用的模型名。
 
-**Prerequisites:** Python 3.11+, Node.js 20+, Docker (optional)
+运行时 LLM 配置保存为 API 容器内的 `/app/data/runtime.env`，属于 `lumate-customized_data` 卷。设置页保存的模型与密钥会在容器重启、重建后加载，解决旧版本试图写入 `/app/.env` 时出现的权限问题。运行时文件只覆盖 LLM 字段，不覆盖数据库、JWT 或加密密钥。
 
-</details>
+需要更换供应商、模型或 API Key 时：
 
-> **Security Note:** Auth is disabled by default for local single-user use. Set `AUTH_ENABLED=true` and configure `JWT_SECRET_KEY` before any network-accessible deployment. See [SECURITY.md](SECURITY.md).
-
-## Public Beta Notes (Local Single-User)
-
-This repository currently targets a **local single-user public beta**.
-
-- Supported first-class platforms: **macOS** and **Linux**
-- Windows is community-supported
-- Multi-user SaaS/classroom mode is out of scope for this beta
-
-Known limitations for this beta:
-
-- Mobile layout is not fully optimized across all workspace views
-- Some advanced autonomous and graph-driven flows are still experimental
-- LLM quality/latency depends on your local runtime and hardware
-
-Before opening an issue, check:
-
-- [Troubleshooting Guide](docs/troubleshooting.md)
-- [Public Beta Release Notes](docs/public-beta-release-notes.md)
-- [Bug Triage & SLA](docs/bug-triage-sla.md)
-
-### Minimal Demo Flow (2-3 minutes)
-
-1. Create/open a course
-2. Upload a PDF/DOCX/PPTX file
-3. Ask a grounded tutor question in chat
-4. Complete one quiz or flashcard review
-5. Check plan/review suggestions in workspace
-6. Export at least one artifact (session or review content)
-
-## Features
-
-### Block-Based Adaptive Workspace
-
-12 composable learning blocks — notes, quiz, flashcards, knowledge graph, study plan, analytics, and more. The workspace adapts: AI suggests layout changes based on your behavior, and progressively unlocks advanced features as you engage.
-
-<p align="center"><img src="docs/assets/demo-workspace.png" alt="Block-based workspace with AI-generated notes and LaTeX" width="700" /></p>
-
-### AI Tutor with Source Citations
-
-Every answer is grounded in your material. The tutor adapts depth based on behavioral signals — fatigue detection, error patterns, message brevity. Supports Socratic questioning mode.
-
-<p align="center"><img src="docs/assets/demo-chat.png" alt="AI tutor chat drawer with workspace" width="700" /></p>
-
-### 30-Second Content Ingestion
-
-Upload PDF, DOCX, PPTX, or connect Canvas LMS. Get structured notes, AI-generated flashcards, and quiz questions automatically. 7 question types: MCQ, short answer, fill-in-blank, true/false, matching, ordering, coding.
-
-<p align="center"><img src="docs/assets/demo-setup.png" alt="Upload flow — drag and drop PDF" width="700" /></p>
-
-### Adaptive Quiz & Practice
-
-AI-generated quizzes with 7 question types. Wrong-answer tracking with diagnostic feedback. Difficulty adapts based on your performance.
-
-<p align="center"><img src="docs/assets/demo-practice.png" alt="Quiz with multiple choice questions" width="700" /></p>
-
-### Study Plan & Calendar
-
-Plan your study schedule with calendar view, task tracking, and deadline management.
-
-<p align="center"><img src="docs/assets/demo-plan.png" alt="Study plan calendar view" width="700" /></p>
-
-### Spaced Repetition (FSRS 4.5)
-
-Optimized free spaced repetition scheduling for flashcards. Tracks what you're forgetting and proactively reminds you to review.
-
-### Knowledge Graph (LOOM) `[Experimental]`
-
-Tracks concept mastery, prerequisite relationships, and weak areas. Based on [LOOM](https://arxiv.org/abs/2511.21037). Extracts concepts from your material, builds a knowledge graph, and generates optimal learning paths.
-
-### Semantic Review (LECTOR) `[Experimental]`
-
-Extends FSRS with knowledge-graph-aware review prioritization. Based on [LECTOR](https://arxiv.org/abs/2508.03275). Clusters related concepts for co-review, prioritizes prerequisites before dependents.
-
-### 10+ LLM Providers
-
-Local-first with Ollama by default. Switch to OpenAI, Anthropic, DeepSeek, Gemini, Groq, vLLM, LM Studio, OpenRouter, or any OpenAI-compatible endpoint.
-
-```bash
-# Local (free, default)
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2:3b
-
-# Cloud (optional)
-LLM_PROVIDER=deepseek
-LLM_MODEL=deepseek-chat
-DEEPSEEK_API_KEY=sk-...
+```sh
+sudo sh scripts/deploy.sh --configure
 ```
 
-See [.env.example](.env.example) for the full list.
+也可以在已登录的设置页修改。API Key、JWT 密钥、加密密钥和配置备份均属于敏感信息，不要提交到 Git 或贴到日志截图中。
 
-## Architecture
+## 更新已有服务器
 
-```
-Lumate/
-├── apps/
-│   ├── api/              # FastAPI backend
-│   │   ├── services/
-│   │   │   ├── agent/              # 3 specialist agents (Tutor, Planner, Layout)
-│   │   │   ├── ingestion/          # Content processing pipeline
-│   │   │   ├── llm/                # Multi-provider LLM router + circuit breaker
-│   │   │   ├── search/             # Hybrid BM25 + vector RAG
-│   │   │   ├── spaced_repetition/  # FSRS scheduler + flashcards
-│   │   │   └── learning_science/   # BKT, difficulty selection, cognitive load
-│   │   ├── routers/           # API route modules (composed + subrouters)
-│   │   └── models/            # SQLAlchemy ORM models
-│   └── web/              # Next.js 16 frontend
-│       └── src/
-│           ├── components/blocks/  # 12 composable learning blocks
-│           ├── store/              # Zustand state stores
-│           └── lib/block-system/   # Block registry, templates, feature unlock
-├── tests/                # pytest + Playwright E2E
-└── docs/                 # PRD, SPEC, architecture decisions
+例如项目位于 `/opt/ai-edu/lumate`：
+
+```sh
+cd /opt/ai-edu/lumate
+git status --short
+git pull --ff-only origin main
+sudo sh scripts/deploy.sh
 ```
 
-### Agent System
+必须确认 `git pull` 成功后再运行新脚本。若看到 `Your local changes ... would be overwritten` 或 `Aborting`，新代码尚未安装。
 
-3 specialist agents coordinated by an intent-routing orchestrator:
+若冲突仅来自旧脚本，可保存该文件的修改再更新：
 
-| Agent | Role |
-|-------|------|
-| **Tutor** | Teaches with adaptive depth, Socratic questioning, source citations |
-| **Planner** | Study plans, goal tracking, deadline management |
-| **Layout** | Workspace configuration based on activity context |
-
-### Tech Stack
-
-| Layer | Technologies |
-|-------|-------------|
-| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, Zustand, shadcn/ui |
-| **Backend** | FastAPI, Python 3.11+, Pydantic 2, SQLAlchemy 2 (async), Alembic |
-| **Database** | SQLite (local-first, current release channel) |
-| **Learning Science** | FSRS 4.5, BKT, LOOM, LECTOR, Cognitive Load Theory |
-| **CI/CD** | GitHub Actions, Docker Compose, Playwright |
-
-## Research
-
-Lumate builds on these papers:
-
-| Paper | What We Use |
-|-------|-------------|
-| [LECTOR](https://arxiv.org/abs/2508.03275) (arxiv 2025) | Semantic spaced repetition via knowledge graph relationships |
-| [LOOM](https://arxiv.org/abs/2511.21037) (arxiv 2025) | Dynamic learner memory graph for concept mastery tracking |
-| [Cognitive Load + DKT](https://www.nature.com/articles/s41598-025-10497-x) (Nature 2025) | Behavioral signals for real-time difficulty adaptation |
-| [FSRS 4.5](https://github.com/open-spaced-repetition/fsrs4.5) | Optimized free spaced repetition scheduling |
-
-## Roadmap
-
-- [x] Block-based adaptive workspace (12 block types)
-- [x] Multi-agent tutor system (Tutor, Planner, Layout)
-- [x] FSRS 4.5 spaced repetition
-- [x] Canvas LMS integration
-- [x] 10+ LLM provider support
-- [x] LOOM knowledge graph — FSRS decay, cross-course linking, content node linking
-- [x] LECTOR semantic review — confusion pairs, prerequisite ordering, FSRS integration
-- [x] Cognitive load — 12-signal detection, intervention tracking, drift detection
-- [ ] Cognitive load weight auto-tuning (data collection in progress)
-- [ ] Mobile-responsive workspace
-- [ ] Multi-user classroom mode
-- [ ] Plugin system for custom blocks
-
-See the [experimental status matrix](docs/experimental-status-matrix.md) for feature flags and module status.
-
-## Contributing
-
-We're building this in public and looking for collaborators. Whether you're into learning science, AI agents, frontend, or backend — there's a place for you.
-
-```bash
-# Run tests
-python -m pytest tests/ -q -k "not llm_router"
-
-# E2E tests (requires running stack)
-npx playwright test
+```sh
+git stash push -m "server-old-deploy-script" -- scripts/fix_llm_persistence.sh
+git pull --ff-only origin main
+sudo sh scripts/deploy.sh
 ```
 
-Check out the [good first issues](https://github.com/Xian1029/lumate/labels/good%20first%20issue) to get started, or read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+暂时不要恢复旧脚本的 stash。若冲突涉及 `apps/api/config.py` 或 Compose 文件，先检查差异并保留需要的改动，不能直接清空整个工作区。配置文件和持久化卷应在代码更新时保留。
 
-## License
+## 服务状态与日志
 
-[MIT](LICENSE)
+以下命令在仓库根目录运行，使用与部署程序相同的项目和生产文件：
 
----
+```sh
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml ps
 
-<div align="center">
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml logs --tail=100 api web redis
 
-**If Lumate helps your learning, consider giving it a star.**
+curl -fsS http://127.0.0.1:8001/api/health/live
+```
 
-[Report Bug](https://github.com/Xian1029/lumate/issues/new?template=bug_report.md) · [Request Feature](https://github.com/Xian1029/lumate/issues/new?template=feature_request.md) · [Join Discussion](https://github.com/Xian1029/lumate/discussions)
+如果修改过 `API_PORT`，健康检查使用对应端口。不要公开整个 `.env.production`、Docker `inspect` 输出或 Compose 展开配置，它们可能包含密钥。
 
-</div>
+## 备份与停止
+
+至少备份生产配置、SQLite 数据库、运行时 LLM 文件和上传教材。`deploy/.env.production` 内的加密密钥也必须保留；随意替换会使此前加密保存的数据无法解密。
+
+数据库与上传文件需要一致的备份时，先停止 Lumate 写入：
+
+```sh
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml stop api web
+```
+
+然后备份 `lumate-customized_data` 与 `lumate-customized_uploads` 命名卷，具体示例见 [DEPLOYMENT.md](DEPLOYMENT.md)。完成后重新启动：
+
+```sh
+docker compose --project-name lumate-customized --env-file deploy/.env.production -f docker-compose.deploy.yml start api web
+```
+
+不要执行带 `-v` 的 `docker compose down`，它会删除命名卷。旧脚本源码已由 Git 历史保留，运行中的学习数据由命名卷保留。
+
+## 常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 提示缺少生产配置 | 使用新 `scripts/deploy.sh`，它会自动准备文件；确认拉取更新成功。 |
+| `ENCRYPTION_KEY` 缺失 | 新部署程序会生成或复用正在运行容器的密钥；格式无效或不一致时需要核对已有配置。 |
+| `PermissionError: /app/.env` | 使用新版本重新构建部署；Compose 应传入 `LOCAL_ENV_FILE=/app/data/runtime.env`。 |
+| LLM 测试失败 | 检查 Key、余额、供应商对应模型名以及服务器的 DNS、TLS 与网络出口；用 `--configure` 重新设置。 |
+| 构建失败 | 检查构建输出、磁盘、内存，以及 Docker/npm/Python 包源的网络访问。 |
+| 三项服务未全部健康 | 查看 API、Web、Redis 日志；Web 的检查已改为 Alpine 镜像自带的 `wget`。 |
+| 上传大 PDF 失败 | 同时检查应用 `MAX_UPLOAD_SIZE_MB`、反向代理上传大小及超时、服务器内存和解析日志。 |
+| Git 更新被本地修改挡住 | 更新未成功；保留并处理本地差异后再拉取，不能继续执行旧入口。 |
+
+健康检查通过表示服务已启动，不等于所有业务场景已验证。上线后应使用实际域名登录，创建学习空间，上传一份实际教材并发起 AI 对话，确认代理、认证、解析和 LLM 均可用。
+
+## 更多文档
+
+- [详细部署说明](DEPLOYMENT.md)
+- [功能说明](FEATURES.md)
+- [安全说明](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
+- [许可证](LICENSE)
