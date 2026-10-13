@@ -40,7 +40,10 @@ const nextConfig: NextConfig = {
   // Error"). Raise it above the backend's 500MB upload limit (plus multipart
   // boundary/field overhead) so PDF/PPTX uploads flow through intact.
   experimental: {
-    proxyClientMaxBodySize: 550 * 1024 * 1024,
+    // Keep the built-in proxy limit above the backend's 500MB upload limit.
+    // The large upload route below is streamed directly, but this also keeps
+    // any remaining API rewrites from falling back to Next's 10MB default.
+    proxyClientMaxBodySize: "550mb",
     // Scanned textbooks are parsed/OCR'd by the upload endpoint. Next's
     // default 30s proxy deadline closes the browser connection while the API
     // is still processing, making a valid upload appear to have failed.
@@ -56,8 +59,10 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      // beforeFiles ensures the API proxy runs before Next.js file matching
-      // and trailing slash normalization, preventing 308 redirect races.
+      // Keep the explicit redirect-safe routes before filesystem matching.
+      // The generic API rewrite is intentionally in afterFiles: this lets the
+      // /api/content/upload route handler stream multipart bodies without
+      // passing through Next's 10MB proxy clone buffer.
       beforeFiles: [
         {
           source: "/api/courses",
@@ -86,12 +91,13 @@ const nextConfig: NextConfig = {
           source: "/api/chat/",
           destination: `${API_URL}/chat/`,
         },
+      ],
+      afterFiles: [
         {
           source: "/api/:path*",
           destination: `${API_URL}/:path*`,
         },
       ],
-      afterFiles: [],
       fallback: [],
     };
   },

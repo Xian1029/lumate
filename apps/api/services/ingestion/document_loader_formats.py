@@ -30,9 +30,14 @@ _marker_models: dict | None = None
 
 
 async def _extract_local_with_crawl4ai(file_path: str) -> tuple[str, str]:
-    """Extract content from local PDF/HTML via Crawl4AI file:// protocol.
+    """Extract a local document with deterministic, offline-safe fallbacks.
 
-    Falls back to legacy extractors if Crawl4AI is unavailable.
+    PDFs deliberately bypass Crawl4AI.  Crawl4AI opens a local PDF through a
+    browser process and can spend the whole request timeout waiting for a
+    browser/page on headless or restricted Docker hosts.  The native PDF path
+    (Marker -> pypdf) is deterministic, does not need network access, and also
+    preserves the image-only PDF fallback.  HTML keeps the existing Crawl4AI
+    path because it benefits from browser rendering.
     """
     import asyncio
 
@@ -45,6 +50,13 @@ async def _extract_local_with_crawl4ai(file_path: str) -> tuple[str, str]:
     from services.parser.english_textbook import is_english_textbook, extract_english_textbook
     if Path(file_path).suffix.lower() == ".pdf" and is_english_textbook(Path(file_path).name):
         return await asyncio.to_thread(extract_english_textbook, file_path)
+
+    # Never send local PDFs through the browser-based extractor.  In Docker
+    # this was the source of consistent ~30s uploads followed by a generic 400
+    # when Chromium could not open file:// pages.  The fallback validates PDF
+    # magic bytes and uses Marker/pypdf without an external service.
+    if Path(file_path).suffix.lower() == ".pdf":
+        return await asyncio.to_thread(_extract_pdf_fallback, file_path)
 
     try:
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig

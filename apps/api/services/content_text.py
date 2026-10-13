@@ -17,6 +17,11 @@ _INVISIBLE_FORMATTING = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
 # work with the source PDF's embedded font, so they become tofu/garbage in a
 # browser and must not be stored as lesson text.
 _PRIVATE_USE_GLYPHS = re.compile(r"[\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]")
+# Some embedded PDF fonts make pypdf emit lone UTF-16 surrogate code points.
+# They cannot be encoded by SQLite/PostgreSQL and must never cross the text
+# ingestion boundary.  Remove only the invalid code points; surrounding text
+# remains unchanged.
+_LONE_SURROGATES = re.compile(r"[\ud800-\udfff]")
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
 _CJK_SPACE = re.compile(r"(?<=[\u3400-\u4dbf\u4e00-\u9fff])[ \t\u00a0\u2000-\u200b]+(?=[\u3400-\u4dbf\u4e00-\u9fff])")
 _SPACE_BEFORE_PUNCT = re.compile(r"\s+([，。！？；：、）》）】』】〉》])")
@@ -167,6 +172,7 @@ def clean_course_text(value: str | None) -> str | None:
     value = _UNSAFE_CONTROLS.sub("", value)
     value = _INVISIBLE_FORMATTING.sub("", value)
     value = _PRIVATE_USE_GLYPHS.sub("", value)
+    value = _LONE_SURROGATES.sub("", value)
     value = value.replace("\ufffd", "")
     value = _strip_pdf_garbage_lines(value)
     # CJK PDF text extractors frequently emit a word-space between every

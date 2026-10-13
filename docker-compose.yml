@@ -103,7 +103,8 @@ services:
     ports:
       - "${WEB_PORT:-3003}:3001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3001 || exit 1"]
+      # node:20-alpine includes wget, not curl.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001 >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

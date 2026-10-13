@@ -1,7 +1,8 @@
 """Unified content extraction -- Crawl4AI as primary engine + GPT-Researcher loader_dict for Office formats.
 
 Architecture:
-- Crawl4AI: web pages (HTTP/HTTPS), PDF (URL + local via file://), local HTML
+- Crawl4AI: web pages (HTTP/HTTPS), URL PDFs, and local HTML
+- Native PDF parser: local PDFs (Marker -> pypdf; no browser/network dependency)
 - loader_dict: DOCX, PPTX, XLSX, CSV, TXT, MD (Office/text formats Crawl4AI doesn't support)
 - Fallback layers: httpx + clean_soup, trafilatura, Playwright cascade
 
@@ -87,7 +88,7 @@ async def extract_content(
 
     ext = Path(file_path).suffix.lstrip(".").lower()
 
-    # PDF and HTML -> Crawl4AI via file:// protocol
+    # Local PDFs use the native parser; local HTML may use Crawl4AI rendering.
     if ext == "pdf":
         return await _extract_local_with_crawl4ai(file_path)
     if ext in ("html", "htm"):

@@ -165,11 +165,20 @@ async def _settle_failure_workflow(db: AsyncSession, job: IngestionJob) -> None:
         # scalar helper. They can still record the retryable failure safely;
         # final-state promotion will happen on the next normal request.
         return
+    # Read from the already-loaded state only.  A failed commit/flush expires
+    # ORM attributes on rollback; accessing ``job.user_id`` then would trigger
+    # an implicit async query outside greenlet_spawn and mask the real error
+    # with a misleading 503/MissingGreenlet response.
+    user_id = job.__dict__.get("user_id")
+    course_id = job.__dict__.get("course_id")
+    original_filename = job.__dict__.get("original_filename")
+    if user_id is None or course_id is None or original_filename is None:
+        return
     attempts = await scalar(
         select(sa.func.count(IngestionJob.id)).where(
-            IngestionJob.user_id == job.user_id,
-            IngestionJob.course_id == job.course_id,
-            IngestionJob.original_filename == job.original_filename,
+            IngestionJob.user_id == user_id,
+            IngestionJob.course_id == course_id,
+            IngestionJob.original_filename == original_filename,
             IngestionJob.status == "failed",
         )
     )
