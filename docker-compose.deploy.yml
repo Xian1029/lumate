@@ -31,12 +31,13 @@ services:
       # The API is only needed by the web proxy; keep it off the public network.
       - "127.0.0.1:${API_PORT:-8001}:8000"
     environment:
-      ENVIRONMENT: production
+      ENVIRONMENT: ${APP_ENVIRONMENT:-production}
       DATABASE_URL: sqlite+aiosqlite:////app/data/lumate.db
       REDIS_URL: redis://redis:6379/0
-      AUTH_ENABLED: "true"
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in deploy/.env.production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      CSRF_SECRET_KEY: ${CSRF_SECRET_KEY:?CSRF_SECRET_KEY must be set in deploy/.env.production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in deploy/.env.production}
       CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set in deploy/.env.production}
       LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}

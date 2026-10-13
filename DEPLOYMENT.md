@@ -17,7 +17,7 @@
 
 - 一台安装 Docker Engine 24+ 和 Docker Compose v2 的 Linux/macOS/Windows 主机。
 - 一个可用的 LLM 服务及对应密钥。默认示例使用 DeepSeek，也可以改成项目支持的其他 provider。
-- 一个至少 32 个字符的 JWT 密钥。
+- 一个至少 32 个字符的 CSRF 签名密钥；部署脚本可自动生成。默认无 JWT 登录。
 - 一个 Fernet 加密密钥，用于生产环境敏感数据加密。
 - 若要启用代码运行题，需要允许 API 容器访问 Docker socket；不需要代码运行时可以切换到项目支持的其他沙箱方案。
 
@@ -29,7 +29,9 @@ Linux 推荐单命令部署（需要 Docker Engine、Compose v2 和 Python 3）�
 sudo sh scripts/deploy.sh
 ```
 
-脚本优先读取已有 `deploy/.env.production`，其次读取根目录 `.env`，均不存在时使用示例配置。配置原子保存为权限 `600` 的生产文件，保留旧文件备份。JWT 缺失或少于 32 字符时会优先复用现有容器中的合法密钥，否则生成并保存 64 字符密钥；合法 JWT 不变。替换旧 JWT 后需要重新登录。Fernet 加密密钥缺失时生成；已有加密密钥格式错误或合法生产密钥与容器不一致时停止核对。缺少公网域名、模型名或 API Key 时会提示输入，API Key 隐藏输入。
+脚本默认读取 `deploy/.env.production`，可用 `--env-file` 指定另一份配置，例如 `sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。指定文件不存在时会从根目录 `.env` 或示例配置初始化。配置原子保存为权限 `600` 的文件，并保留旧文件备份。不同文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。脚本会生成或复用 CSRF 签名密钥；Fernet 加密密钥缺失时生成，已有密钥格式错误或与容器不一致时停止核对。缺少公网域名、模型名或 API Key 时会提示输入，API Key 隐藏输入。
+
+默认配置为 `APP_ENVIRONMENT=production`、`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`。这种模式不验证 JWT，所有访问者共用一个账号；已有多账号数据库会使用最早创建的账号。公网部署须在反向代理或网络层限制访问。不同环境配置文件可以覆盖这些选项；若显式开启 JWT，需提供至少 32 字符的 `JWT_SECRET_KEY`。
 
 它会校验 Compose 的容器与数据卷隔离范围，构建前后端镜像，在切换在线服务前测试一次真实 LLM 请求（会使用少量 API 额度），然后启动服务并等待 API、Web、Redis 全部健康。LLM 不可用或健康检查失败会以非零状态退出。部署脚本不修改 Git 跟踪的源码，也不执行 Git 更新；重复部署仍使用同一批 Lumate 数据卷。
 
@@ -38,7 +40,7 @@ sudo sh scripts/deploy.sh
 ```bash
 cp deploy/.env.production.example deploy/.env.production
 
-# 生成 JWT_SECRET_KEY
+# 生成 CSRF_SECRET_KEY（表单请求签名，与 JWT 登录无关）
 openssl rand -hex 32
 
 # 生成 ENCRYPTION_KEY（需要 Python cryptography 依赖）
@@ -105,7 +107,7 @@ docker run --rm -v lumate-customized_uploads:/data -v "$PWD":/backup alpine \
 
 ## 常见问题
 
-- **API 容器反复重启**：查看 `logs api`。生产环境必须设置 `JWT_SECRET_KEY` 和 `ENCRYPTION_KEY`，并且长度/格式正确。
+- **API 容器反复重启**：查看 `logs api`。生产环境必须设置 `CSRF_SECRET_KEY` 和 `ENCRYPTION_KEY`，并且长度/格式正确；仅开启 JWT 登录时才需 `JWT_SECRET_KEY`。
 - **AI 提示服务不可用**：确认 `LLM_PROVIDER`、对应 API key、模型名和网络出口；`LLM_REQUIRED=true` 时不会使用模拟回复。
 - **上传大 PDF 失败**：确认 `MAX_UPLOAD_SIZE_MB`，同时保证反向代理的请求体限制不小于该值。内置 Next.js 代理已将上限设为 550 MB。
 - **代码运行题不可用**：确认 Docker socket 路径和 `CODE_SANDBOX_BACKEND=container`；不要在生产环境随意开启 `ALLOW_INSECURE_PROCESS_SANDBOX=true`。

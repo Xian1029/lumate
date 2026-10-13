@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     deployment_mode: str = "single_user"  # single_user | multi_user
     jwt_secret_key: str = ""
+    csrf_secret_key: str = ""
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
@@ -233,11 +234,11 @@ class Settings(BaseSettings):
 
         _log = _logging.getLogger("opentutor.config")
 
-        # Generate a random CSRF signing key when jwt_secret_key is not set
-        # (CSRF middleware needs a signing key even when auth is disabled)
-        if not self.jwt_secret_key:
+        # CSRF signing is independent of JWT authentication.  Preserve the
+        # legacy JWT key as a fallback for existing local installations.
+        if not self.csrf_secret_key:
             import secrets as _secrets
-            self.jwt_secret_key = _secrets.token_hex(32)
+            self.csrf_secret_key = self.jwt_secret_key or _secrets.token_hex(32)
 
         if self.auth_enabled:
             if len(self.jwt_secret_key) < 32:
@@ -245,29 +246,24 @@ class Settings(BaseSettings):
                     "jwt_secret_key must be at least 32 characters when auth is enabled"
                 )
         else:
-            if self.environment != "development":
+            if self.deployment_mode != "single_user":
                 raise ValueError(
-                    "AUTH_ENABLED must be true outside of development. "
-                    "Running without authentication exposes all user data. "
-                    "Set AUTH_ENABLED=true and JWT_SECRET_KEY (>= 32 chars)."
+                    "AUTH_ENABLED=false requires DEPLOYMENT_MODE=single_user."
                 )
             _log.warning(
-                "SECURITY WARNING: auth_enabled=False (development mode). "
-                "Anyone with network access can use this instance without authentication. "
-                "Set AUTH_ENABLED=true and configure JWT_SECRET_KEY before deploying.",
+                "SECURITY WARNING: auth_enabled=False (single-user mode). "
+                "Anyone who can reach the web app can access its shared data. "
+                "Restrict access at the reverse proxy or network boundary.",
             )
 
         if self.environment in ("production", "staging"):
-            if not self.auth_enabled:
-                raise ValueError(
-                    "AUTH_ENABLED must be true in production/staging. "
-                    "Running without authentication in production is a critical security risk."
-                )
-            env_key = os.environ.get("JWT_SECRET_KEY", "")
-            if not env_key or len(env_key) < 32:
+            if self.auth_enabled and len(os.environ.get("JWT_SECRET_KEY", "")) < 32:
                 raise ValueError(
                     "JWT_SECRET_KEY must be explicitly set (>= 32 chars) in production with auth enabled"
                 )
+            csrf_env_key = os.environ.get("CSRF_SECRET_KEY", "")
+            if len(csrf_env_key) < 32 or csrf_env_key.startswith("replace-with-"):
+                raise ValueError("CSRF_SECRET_KEY must be explicitly set (>= 32 chars) in production/staging")
             if "REDACTED_DEV_PASSWORD" in self.database_url:
                 raise ValueError(
                     "Default database password must be changed in production"

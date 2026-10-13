@@ -80,7 +80,7 @@ class TestCSRFMiddleware:
     @pytest.fixture()
     def csrf_app(self):
         with patch("config.settings") as mock_settings:
-            mock_settings.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret  # pragma: allowlist secret
+            mock_settings.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             mock_settings.environment = "development"
             from middleware.csrf import CSRFMiddleware
             app = _make_app([(CSRFMiddleware, {})])
@@ -141,9 +141,9 @@ class TestCSRFMiddleware:
     async def test_post_with_valid_token_succeeds(self, csrf_app):
         """POST with a valid matching CSRF token should pass through."""
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             s.environment = "development"
-            token = _generate_csrf_token(s.jwt_secret_key)
+            token = _generate_csrf_token(s.csrf_secret_key)
         async with AsyncClient(
             transport=ASGITransport(app=csrf_app), base_url="http://test"
         ) as client:
@@ -167,13 +167,13 @@ class TestCSRFMiddleware:
     async def test_expired_token_returns_403(self, csrf_app):
         """A token older than 24 hours should be rejected."""
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             # Generate token with timestamp 25 hours ago
             old_ts = str(int(time.time()) - 90000)
             import secrets as _s
             random_part = _s.token_hex(16)
             payload = f"{old_ts}.{random_part}"
-            sig = hmac.new(s.jwt_secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+            sig = hmac.new(s.csrf_secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
             expired_token = f"{payload}.{sig}"
 
         async with AsyncClient(
@@ -455,14 +455,14 @@ class TestCSRFTokenValidation:
 
     def test_generate_and_validate_roundtrip(self):
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             from middleware.csrf import _generate_token, _validate_token
             token = _generate_token()
             assert _validate_token(token) is True
 
     def test_reject_malformed_token(self):
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             from middleware.csrf import _validate_token
             assert _validate_token("not-a-valid-token") is False
             assert _validate_token("") is False
@@ -471,7 +471,7 @@ class TestCSRFTokenValidation:
 
     def test_reject_tampered_signature(self):
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             from middleware.csrf import _generate_token, _validate_token
             token = _generate_token()
             parts = token.split(".")
@@ -482,19 +482,19 @@ class TestCSRFTokenValidation:
     def test_reject_token_with_wrong_secret(self):
         """Token generated with one secret should fail validation with another."""
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "secret-one-that-is-long-enough-32c"  # pragma: allowlist secret
+            s.csrf_secret_key = "secret-one-that-is-long-enough-32c"  # pragma: allowlist secret
             from middleware.csrf import _generate_token
             token = _generate_token()
 
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "secret-two-that-is-long-enough-32c"  # pragma: allowlist secret
+            s.csrf_secret_key = "secret-two-that-is-long-enough-32c"  # pragma: allowlist secret
             from middleware.csrf import _validate_token
             assert _validate_token(token) is False
 
     def test_reject_non_numeric_timestamp(self):
         with patch("middleware.csrf.settings") as s:
-            s.jwt_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
+            s.csrf_secret_key = "test-secret-key-that-is-long-enough"  # pragma: allowlist secret
             from middleware.csrf import _validate_token
             payload = "notanumber.abcdef0123456789abcdef0123456789"
-            sig = hmac.new(s.jwt_secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+            sig = hmac.new(s.csrf_secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
             assert _validate_token(f"{payload}.{sig}") is False

@@ -40,11 +40,15 @@ sudo sh scripts/deploy.sh
 
 `deploy.sh` 调用项目内的 Python 标准库部署程序，无须为部署程序安装 Python 包。旧入口 `scripts/fix_llm_persistence.sh` 已移除。
 
+可传入另一份环境配置：`sudo sh scripts/deploy.sh --env-file deploy/.env.staging`。路径相对于仓库根目录；默认仍使用 `deploy/.env.production`。每份文件可分别设置 `APP_ENVIRONMENT`、`AUTH_ENABLED` 和 `DEPLOYMENT_MODE`。不同配置文件会切换同一套 Lumate 容器和数据卷，不会同时创建两套环境。
+
+默认生产配置关闭 JWT 登录（`AUTH_ENABLED=false`、`DEPLOYMENT_MODE=single_user`），所有访问者共用同一个账号；已有多账号数据库会使用最早创建的账号。任何能打开 Web 地址的人都能查看或修改该账号的学习数据，公网使用时请在反向代理或网络层限制访问。若配置文件显式开启 JWT，仍须设置至少 32 字符的 `JWT_SECRET_KEY`。
+
 脚本自动完成以下步骤：
 
 1. 检查 Docker Engine 和 Compose 是否可用，并核对现有 Lumate 容器归属。
 2. 优先读取 `deploy/.env.production`；没有时读取旧根目录 `.env`；两者均不存在时使用生产配置示例。
-3. JWT 密钥缺失或少于 32 字符时，优先复用现有 Lumate 容器中的合法密钥，否则生成并保存 64 字符密钥；合法密钥保留。Fernet 加密密钥缺失时生成；已有加密密钥格式无效或合法生产密钥与容器不一致时停止核对。
+3. 为 CSRF 请求防护生成或复用独立签名密钥。Fernet 加密密钥缺失时生成；已有加密密钥格式无效或与容器不一致时停止核对。
 4. 按需要提示输入公网地址、云端模型与 API Key。API Key 使用隐藏输入。
 5. 原子保存权限为 `600` 的生产配置，并为已有生产文件创建独立备份。
 6. 校验 Compose 的容器和数据卷命名，构建 API 与 Web 镜像。
@@ -80,7 +84,7 @@ LLM 测试会消耗少量 API 额度。构建失败或 LLM 测试失败时脚本
 
 部署程序支持 `deepseek`、`openai`、`anthropic`、`openrouter`、`gemini`、`groq`。DeepSeek 的示例模型为 `deepseek-chat`；其他供应商请输入账户实际可用的模型名。
 
-运行时 LLM 配置保存为 API 容器内的 `/app/data/runtime.env`，属于 `lumate-customized_data` 卷。设置页保存的模型与密钥会在容器重启、重建后加载，解决旧版本试图写入 `/app/.env` 时出现的权限问题。运行时文件只覆盖 LLM 字段，不覆盖数据库、JWT 或加密密钥。
+运行时 LLM 配置保存为 API 容器内的 `/app/data/runtime.env`，属于 `lumate-customized_data` 卷。设置页保存的模型与密钥会在容器重启、重建后加载。运行时文件只覆盖 LLM 字段，不覆盖数据库、CSRF 或加密密钥。
 
 需要更换供应商、模型或 API Key 时：
 
@@ -88,7 +92,7 @@ LLM 测试会消耗少量 API 额度。构建失败或 LLM 测试失败时脚本
 sudo sh scripts/deploy.sh --configure
 ```
 
-也可以在已登录的设置页修改。API Key、JWT 密钥、加密密钥和配置备份均属于敏感信息，不要提交到 Git 或贴到日志截图中。
+也可以在设置页修改。API Key、CSRF 密钥、加密密钥和配置备份均属于敏感信息，不要提交到 Git 或贴到日志截图中。
 
 ## 更新已有服务器
 
@@ -151,7 +155,7 @@ docker compose --project-name lumate-customized --env-file deploy/.env.productio
 | --- | --- |
 | 提示缺少生产配置 | 使用新 `scripts/deploy.sh`，它会自动准备文件；确认拉取更新成功。 |
 | `ENCRYPTION_KEY` 缺失 | 新部署程序会生成或复用正在运行容器的密钥；格式无效或不一致时需要核对已有配置。 |
-| `jwt_secret_key must be at least 32 characters` | 新部署程序会自动修复短 JWT 密钥并持久化；替换旧 JWT 密钥后需要重新登录。 |
+| `CSRF_SECRET_KEY must be at least 32 characters` | 使用新部署脚本生成并持久化 CSRF 密钥；手动部署时需自行设置。仅显式开启 JWT 时才需要 `JWT_SECRET_KEY`。 |
 | `PermissionError: /app/.env` | 使用新版本重新构建部署；Compose 应传入 `LOCAL_ENV_FILE=/app/data/runtime.env`。 |
 | LLM 测试失败 | 检查 Key、余额、供应商对应模型名以及服务器的 DNS、TLS 与网络出口；用 `--configure` 重新设置。 |
 | 构建失败 | 检查构建输出、磁盘、内存，以及 Docker/npm/Python 包源的网络访问。 |
@@ -159,7 +163,7 @@ docker compose --project-name lumate-customized --env-file deploy/.env.productio
 | 上传大 PDF 失败 | 同时检查应用 `MAX_UPLOAD_SIZE_MB`、反向代理上传大小及超时、服务器内存和解析日志。 |
 | Git 更新被本地修改挡住 | 更新未成功；保留并处理本地差异后再拉取，不能继续执行旧入口。 |
 
-健康检查通过表示服务已启动，不等于所有业务场景已验证。上线后应使用实际域名登录，创建学习空间，上传一份实际教材并发起 AI 对话，确认代理、认证、解析和 LLM 均可用。
+健康检查通过表示服务已启动，不等于所有业务场景已验证。上线后应使用实际域名创建学习空间，上传一份实际教材并发起 AI 对话，确认代理、解析和 LLM 均可用。
 
 ## 更多文档
 

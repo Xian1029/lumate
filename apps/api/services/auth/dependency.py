@@ -45,7 +45,12 @@ async def get_current_user(
     """Resolve the current user from JWT or fall back to local user."""
     if settings.deployment_mode == "single_user" and not settings.auth_enabled:
         # Explicit single-user deployment mode.
-        result = await _execute_user_query(db, select(User).limit(1))
+        # A production database may already contain several JWT accounts.
+        # Always resolve the same existing account when switching to the
+        # single-user profile, regardless of database row iteration order.
+        result = await _execute_user_query(
+            db, select(User).order_by(User.created_at.asc(), User.id.asc()).limit(1)
+        )
         user = result.scalar_one_or_none()
         if not user:
             user = User(name="Owner")

@@ -45,7 +45,7 @@ def _generate_token() -> str:
     random_part = secrets.token_hex(16)
     payload = f"{timestamp}.{random_part}"
     sig = hmac.new(
-        settings.jwt_secret_key.encode(),
+        settings.csrf_secret_key.encode(),
         payload.encode(),
         hashlib.sha256,
     ).hexdigest()[:16]
@@ -63,7 +63,7 @@ def _validate_token(token: str) -> bool:
     # Check signature
     payload = f"{timestamp_str}.{random_part}"
     expected_sig = hmac.new(
-        settings.jwt_secret_key.encode(),
+        settings.csrf_secret_key.encode(),
         payload.encode(),
         hashlib.sha256,
     ).hexdigest()[:16]

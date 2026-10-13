@@ -45,13 +45,13 @@ def missing(value):
     return not value or value.startswith("replace-with-")
 
 
-def choose_jwt(configured, previous):
-    """Repair unusable JWT keys while preserving an existing usable key."""
+def choose_csrf(configured, previous):
+    """Keep a stable CSRF signing key across single-user deployments."""
     configured_valid = not missing(configured) and len(configured) >= 32
     previous_valid = not missing(previous) and len(previous) >= 32
     if previous_valid:
         if configured_valid and configured != previous:
-            raise ValueError("JWT_SECRET_KEY differs from the existing Lumate container. Reconcile the existing key before deploying.")
+            raise ValueError("CSRF_SECRET_KEY differs from the existing Lumate container. Reconcile the existing key before deploying.")
         return previous
     if configured_valid:
         return configured
@@ -93,8 +93,18 @@ def inspect_api():
 
 
 def validate(values):
-    if len(values["JWT_SECRET_KEY"]) < 32:
-        raise ValueError("Existing JWT_SECRET_KEY is shorter than 32 characters; repair it explicitly.")
+    if len(values["CSRF_SECRET_KEY"]) < 32:
+        raise ValueError("CSRF_SECRET_KEY must be at least 32 characters.")
+    if values.get("APP_ENVIRONMENT", "production") not in ("development", "staging", "production"):
+        raise ValueError("APP_ENVIRONMENT must be development, staging or production.")
+    auth_value = values.get("AUTH_ENABLED", "false").lower()
+    if auth_value not in ("0", "1", "false", "true", "no", "yes", "off", "on"):
+        raise ValueError("AUTH_ENABLED must be true or false.")
+    auth_enabled = auth_value in ("1", "true", "yes", "on")
+    if not auth_enabled and values.get("DEPLOYMENT_MODE", "single_user") != "single_user":
+        raise ValueError("AUTH_ENABLED=false requires DEPLOYMENT_MODE=single_user.")
+    if auth_enabled and len(values.get("JWT_SECRET_KEY", "")) < 32:
+        raise ValueError("JWT_SECRET_KEY must be at least 32 characters when AUTH_ENABLED=true.")
     try:
         if len(base64.b64decode(values["ENCRYPTION_KEY"], altchars=b"-_", validate=True)) != 32:
             raise ValueError()
@@ -113,8 +123,14 @@ def validate(values):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configure", action="store_true", help="prompt to change cloud LLM provider/model/key")
+    parser.add_argument("--env-file", type=Path, help="deployment env file (default: deploy/.env.production)")
     options = parser.parse_args()
     os.chdir(ROOT)
+    env_path = options.env_file or PROD
+    if not env_path.is_absolute():
+        env_path = ROOT / env_path
+    if env_path.is_symlink():
+        raise ValueError("Deployment env file must be a regular file, not a symlink.")
     run(["docker", "info"])
     run(["docker", "compose", "version"])
     existing = inspect_api()
@@ -128,20 +144,25 @@ def main():
             capture_output=True, text=True, timeout=20)
         if result.returncode == 0:
             runtime = json.loads(result.stdout)
-    if PROD.is_symlink():
-        raise ValueError("Production env file must be a regular file.")
-    source = PROD if PROD.exists() else ROOT / ".env"
+    source = env_path if env_path.exists() else ROOT / ".env"
     if not source.exists():
         source = ROOT / "deploy/.env.production.example"
     original = source.read_text()
     values = read_env(original)
     updates = {}
-    jwt = choose_jwt(values.get("JWT_SECRET_KEY"), previous.get("JWT_SECRET_KEY"))
-    if jwt != values.get("JWT_SECRET_KEY"):
-        values["JWT_SECRET_KEY"] = updates["JWT_SECRET_KEY"] = jwt
-        print("Prepared a valid JWT key (existing valid key reused or a new 64-character key generated).", flush=True)
-    if previous.get("JWT_SECRET_KEY") and jwt != previous["JWT_SECRET_KEY"]:
-        print("The old JWT key was unusable; sign in again after deployment.", flush=True)
+    # A legacy JWT key signed CSRF tokens before these secrets were separated.
+    # Reuse it once when migrating an existing installation, so browser tokens
+    # stay valid. JWT authentication itself is selected only by AUTH_ENABLED.
+    configured_csrf = values.get("CSRF_SECRET_KEY")
+    if missing(configured_csrf):
+        configured_csrf = values.get("JWT_SECRET_KEY")
+    previous_csrf = previous.get("CSRF_SECRET_KEY") or previous.get("JWT_SECRET_KEY")
+    csrf = choose_csrf(configured_csrf, previous_csrf)
+    if csrf != values.get("CSRF_SECRET_KEY"):
+        values["CSRF_SECRET_KEY"] = updates["CSRF_SECRET_KEY"] = csrf
+        print("Prepared a persistent CSRF signing key.", flush=True)
+    values.setdefault("AUTH_ENABLED", "false")
+    values.setdefault("DEPLOYMENT_MODE", "single_user")
     for key in ("ENCRYPTION_KEY", "CORS_ORIGINS"):
         if missing(values.get(key)) and not missing(previous.get(key)):
             values[key] = updates[key] = previous[key]
@@ -176,15 +197,15 @@ def main():
     updates[key_name] = key
     values.update(updates)
     validate(values)
-    PROD.parent.mkdir(parents=True, exist_ok=True)
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     # Keep the previous env file recoverable, never overwrite a prior backup.
-    if PROD.exists():
-        backup = PROD.with_name(".env.production.backup-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3))
+    if env_path.exists():
+        backup = env_path.with_name(env_path.name + ".backup-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3))
         fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as file:
             file.write(original)
-    write_env(PROD, original, updates)
-    compose = ["docker", "compose", "--project-name", PROJECT, "--env-file", str(PROD), "-f", str(ROOT / "docker-compose.deploy.yml")]
+    write_env(env_path, original, updates)
+    compose = ["docker", "compose", "--project-name", PROJECT, "--env-file", str(env_path), "-f", str(ROOT / "docker-compose.deploy.yml")]
     # Remove inherited variable overrides so Compose uses the saved env file.
     for name in values:
         os.environ.pop(name, None)

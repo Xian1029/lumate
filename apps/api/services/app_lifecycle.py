@@ -480,12 +480,10 @@ def _print_auth_warning() -> None:
         "╔══════════════════════════════════════════════════════════════╗\n"
         "║  ⚠  AUTHENTICATION IS DISABLED (AUTH_ENABLED=false)        ║\n"
         "║                                                            ║\n"
-        "║  This is fine for local single-user use.                   ║\n"
-        "║  DO NOT expose this instance to the public internet.       ║\n"
+        "║  Every visitor can access the same learning data.          ║\n"
+        "║  Restrict access at your proxy or network boundary.        ║\n"
         "║                                                            ║\n"
-        "║  To enable auth:                                           ║\n"
-        "║    1. Set AUTH_ENABLED=true in .env                        ║\n"
-        "║    2. Set JWT_SECRET_KEY to a random string (>=32 chars)   ║\n"
+        "║  JWT login is disabled for this single-user deployment.    ║\n"
         "╚══════════════════════════════════════════════════════════════╝"
     )
 

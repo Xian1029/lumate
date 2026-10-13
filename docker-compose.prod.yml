@@ -10,9 +10,12 @@ services:
           memory: 4G
           cpus: "4.0"
     environment:
-      ENVIRONMENT: production
-      AUTH_ENABLED: "true"
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
+      ENVIRONMENT: ${APP_ENVIRONMENT:-production}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-single_user}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      CSRF_SECRET_KEY: ${CSRF_SECRET_KEY:?CSRF_SECRET_KEY must be set in production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in production}
       LLM_REQUIRED: "true"
       APP_AUTO_CREATE_TABLES: "false"
       APP_AUTO_SEED_SYSTEM: "false"
