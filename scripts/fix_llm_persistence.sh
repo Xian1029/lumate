@@ -3,7 +3,8 @@
 # Run as root: sh scripts/fix_llm_persistence.sh
 set -eu
 
-APP_DIR="${APP_DIR:-$(pwd)}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+APP_DIR="${APP_DIR:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}"
 PROJECT="lumate-customized"
 ENV_FILE="deploy/.env.production"
 COMPOSE_FILE="docker-compose.deploy.yml"
@@ -13,10 +14,27 @@ command -v docker >/dev/null 2>&1 || fail "Docker is not installed."
 [ "$(id -u)" -eq 0 ] || fail "Run as root or with sudo."
 [ -d "$APP_DIR" ] || fail "Lumate directory not found: $APP_DIR"
 cd "$APP_DIR"
-[ -f "$ENV_FILE" ] || fail "Missing $ENV_FILE."
+if [ ! -f "$ENV_FILE" ]; then
+  # Older Lumate installations keep their production settings in the
+  # repository-root .env.  Reuse it rather than asking operators to copy a
+  # secret-bearing file into a second location.
+  if [ -f .env ]; then
+    ENV_FILE=.env
+    printf '%s\n' "Using existing legacy environment file: .env"
+  else
+    fail "Missing deploy/.env.production and .env. Create one from deploy/.env.production.example."
+  fi
+fi
 [ -f "$COMPOSE_FILE" ] || fail "Missing $COMPOSE_FILE."
 [ -f apps/api/config.py ] || fail "Not an expected Lumate source tree."
 COMPOSE="docker compose --project-name $PROJECT --env-file $ENV_FILE -f $COMPOSE_FILE"
+
+# Fail before changing source or rebuilding if the selected environment file
+# cannot satisfy the production Compose file (for example, a legacy .env that
+# lacks JWT_SECRET_KEY, ENCRYPTION_KEY, or CORS_ORIGINS).
+if ! $COMPOSE config -q; then
+  fail "Compose configuration is incomplete. Check $ENV_FILE for the required production variables before retrying."
+fi
 
 # Load LLM settings from the Lumate-only data volume after Compose variables.
 if ! grep -q 'LOCAL_ENV_FILE' apps/api/config.py; then
@@ -52,9 +70,12 @@ printf '%s' "Model [deepseek-chat]: "
 IFS= read -r LLM_MODEL || true
 LLM_MODEL=${LLM_MODEL:-deepseek-chat}
 printf '%s' "API key (hidden): "
+restore_terminal() { stty echo >/dev/null 2>&1 || true; }
+trap restore_terminal EXIT HUP INT TERM
 stty -echo
 IFS= read -r LLM_API_KEY || true
 stty echo
+trap - EXIT HUP INT TERM
 printf '\n'
 [ -n "$LLM_API_KEY" ] || fail "No API key entered."
 

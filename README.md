@@ -69,7 +69,9 @@ The script rebuilds only the `lumate-customized` stack, prompts for the cloud
 LLM provider, model, and API key without echoing the key, then verifies provider
 health. Runtime settings are persisted in the Lumate data volume and survive
 container restarts. It does not modify `opentutor-*` containers, networks, or
-volumes. See [DEPLOYMENT.md](DEPLOYMENT.md) for the production prerequisites.
+volumes. It uses `deploy/.env.production`, or automatically falls back to an
+existing legacy root `.env` when it contains all required production variables.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the production prerequisites.
 
 ### One-Click Cloud Deploy
 
