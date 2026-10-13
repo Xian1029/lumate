@@ -55,6 +55,22 @@ Open [http://localhost:3001](http://localhost:3001). Done.
 
 > No Docker? Use `bash scripts/quickstart.sh` instead — it handles Python venv, npm install, DB setup, and starts both servers.
 
+### Repair persistent cloud LLM settings (single command)
+
+For an existing Linux production deployment where saving an LLM key in the UI
+fails with `PermissionError: /app/.env`, run the following from the Lumate
+repository as root (or through `sudo`):
+
+```bash
+sudo sh scripts/fix_llm_persistence.sh
+```
+
+The script rebuilds only the `lumate-customized` stack, prompts for the cloud
+LLM provider, model, and API key without echoing the key, then verifies provider
+health. Runtime settings are persisted in the Lumate data volume and survive
+container restarts. It does not modify `opentutor-*` containers, networks, or
+volumes. See [DEPLOYMENT.md](DEPLOYMENT.md) for the production prerequisites.
+
 ### One-Click Cloud Deploy
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Xian1029/lumate)

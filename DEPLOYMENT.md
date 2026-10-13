@@ -42,6 +42,16 @@ docker ps --format 'table {{.Names}}\t{{.Ports}}' | grep -E 'lumate-customized|o
 
 如果 API 日志出现 `sqlite3.OperationalError: unable to open database file`，请拉取包含数据卷权限修复的最新代码后，重新执行上面的 `up -d --build`。镜像会自动修复 Lumate 专用数据卷的权限；不要删除或重命名任何 `opentutor-*` 容器、网络或数据卷。
 
+### 修复并持久化云端 LLM 配置
+
+如果在设置页保存云端 LLM 的 API Key 时出现 `PermissionError: /app/.env`，在 Lumate 仓库根目录执行以下单个命令：
+
+```bash
+sudo sh scripts/fix_llm_persistence.sh
+```
+
+脚本会构建并重启 `lumate-customized` 服务，隐藏输入 API Key，将运行时 LLM 配置保存到 Lumate 专用数据卷，并检查 provider 健康状态。它不会修改任何 `opentutor-*` 容器、网络或数据卷。
+
 `deploy/.env.production` 只存在于部署主机，不要提交到 Git。首次启动会创建数据库表和系统初始数据；之后可将 `APP_AUTO_CREATE_TABLES` 与 `APP_AUTO_SEED_SYSTEM` 改为 `false`，再执行 `docker compose ... up -d`。
 
 ## 验证与日常运维
