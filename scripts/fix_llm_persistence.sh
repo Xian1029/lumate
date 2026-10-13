@@ -10,7 +10,15 @@ ENV_FILE="deploy/.env.production"
 COMPOSE_FILE="docker-compose.deploy.yml"
 
 fail() { printf '%s\n' "ERROR: $*" >&2; exit 1; }
+has_env_value() {
+  grep -qE "^${1}=.+" "$ENV_FILE" 2>/dev/null
+}
+append_env_value() {
+  # Values passed by this script are generated locally or validated as one line.
+  printf '\n%s=%s\n' "$1" "$2" >> "$ENV_FILE"
+}
 command -v docker >/dev/null 2>&1 || fail "Docker is not installed."
+[ -t 0 ] || fail "Run this script in an interactive terminal so credentials can be entered safely."
 [ "$(id -u)" -eq 0 ] || fail "Run as root or with sudo."
 [ -d "$APP_DIR" ] || fail "Lumate directory not found: $APP_DIR"
 cd "$APP_DIR"
@@ -19,19 +27,43 @@ if [ ! -f "$ENV_FILE" ]; then
   # repository-root .env.  Reuse it rather than asking operators to copy a
   # secret-bearing file into a second location.
   if [ -f .env ]; then
-    ENV_FILE=.env
-    printf '%s\n' "Using existing legacy environment file: .env"
+    install -d -m 700 deploy
+    umask 077
+    cp .env "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    printf '%s\n' "Created $ENV_FILE from the existing legacy .env."
   else
-    fail "Missing deploy/.env.production and .env. Create one from deploy/.env.production.example."
+    fail "Missing deploy/.env.production and .env. Create .env from deploy/.env.production.example first."
   fi
 fi
+chmod 600 "$ENV_FILE"
 [ -f "$COMPOSE_FILE" ] || fail "Missing $COMPOSE_FILE."
 [ -f apps/api/config.py ] || fail "Not an expected Lumate source tree."
 COMPOSE="docker compose --project-name $PROJECT --env-file $ENV_FILE -f $COMPOSE_FILE"
 
-# Fail before changing source or rebuilding if the selected environment file
-# cannot satisfy the production Compose file (for example, a legacy .env that
-# lacks JWT_SECRET_KEY, ENCRYPTION_KEY, or CORS_ORIGINS).
+# Generate only secrets that do not need to match an external service.
+# Keeping them in deploy/.env.production makes restarts deterministic.
+if ! has_env_value JWT_SECRET_KEY; then
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to generate JWT_SECRET_KEY."
+  append_env_value JWT_SECRET_KEY "$(openssl rand -hex 32)"
+  printf '%s\n' "Generated missing JWT_SECRET_KEY."
+fi
+if ! has_env_value ENCRYPTION_KEY; then
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to generate ENCRYPTION_KEY."
+  append_env_value ENCRYPTION_KEY "$(openssl rand -base64 32 | tr '+/' '-_')"
+  printf '%s\n' "Generated missing ENCRYPTION_KEY."
+fi
+if ! has_env_value CORS_ORIGINS; then
+  printf '%s' "Public HTTPS origin, e.g. https://learn.example.com: "
+  IFS= read -r CORS_ORIGIN || true
+  case "$CORS_ORIGIN" in
+    https://*|http://localhost:*|http://127.0.0.1:*) ;;
+    *) fail "CORS_ORIGINS must be a single http:// or https:// origin."
+  esac
+  append_env_value CORS_ORIGINS "$CORS_ORIGIN"
+fi
+
+# Validate before touching application source or rebuilding.
 if ! $COMPOSE config -q; then
   fail "Compose configuration is incomplete. Check $ENV_FILE for the required production variables before retrying."
 fi
