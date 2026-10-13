@@ -44,7 +44,7 @@ sudo sh scripts/deploy.sh
 
 1. 检查 Docker Engine 和 Compose 是否可用，并核对现有 Lumate 容器归属。
 2. 优先读取 `deploy/.env.production`；没有时读取旧根目录 `.env`；两者均不存在时使用生产配置示例。
-3. 复用已有生产 JWT、Fernet 密钥；缺失时生成。已有密钥格式无效或与正在运行的 Lumate 容器不一致时停止，避免意外替换密钥。
+3. JWT 密钥缺失或少于 32 字符时，优先复用现有 Lumate 容器中的合法密钥，否则生成并保存 64 字符密钥；合法密钥保留。Fernet 加密密钥缺失时生成；已有加密密钥格式无效或合法生产密钥与容器不一致时停止核对。
 4. 按需要提示输入公网地址、云端模型与 API Key。API Key 使用隐藏输入。
 5. 原子保存权限为 `600` 的生产配置，并为已有生产文件创建独立备份。
 6. 校验 Compose 的容器和数据卷命名，构建 API 与 Web 镜像。
@@ -151,6 +151,7 @@ docker compose --project-name lumate-customized --env-file deploy/.env.productio
 | --- | --- |
 | 提示缺少生产配置 | 使用新 `scripts/deploy.sh`，它会自动准备文件；确认拉取更新成功。 |
 | `ENCRYPTION_KEY` 缺失 | 新部署程序会生成或复用正在运行容器的密钥；格式无效或不一致时需要核对已有配置。 |
+| `jwt_secret_key must be at least 32 characters` | 新部署程序会自动修复短 JWT 密钥并持久化；替换旧 JWT 密钥后需要重新登录。 |
 | `PermissionError: /app/.env` | 使用新版本重新构建部署；Compose 应传入 `LOCAL_ENV_FILE=/app/data/runtime.env`。 |
 | LLM 测试失败 | 检查 Key、余额、供应商对应模型名以及服务器的 DNS、TLS 与网络出口；用 `--configure` 重新设置。 |
 | 构建失败 | 检查构建输出、磁盘、内存，以及 Docker/npm/Python 包源的网络访问。 |

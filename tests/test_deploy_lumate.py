@@ -69,8 +69,26 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(text.count('ENCRYPTION_KEY='), 1)
         self.assertEqual(deploy.read_env(text)['JWT_SECRET_KEY'], 'a'*40)
 
-    def test_invalid_existing_key_stops_before_build(self):
+    def test_short_existing_jwt_is_repaired_and_persisted(self):
         (self.root / '.env').write_text('JWT_SECRET_KEY=short\nCORS_ORIGINS=https://learn.example.com\n')
+        self.execute()
+        prod = self.root / 'deploy/.env.production'
+        first = deploy.read_env(prod.read_text())['JWT_SECRET_KEY']
+        self.assertEqual(len(first), 64)
+        self.execute()
+        self.assertEqual(deploy.read_env(prod.read_text())['JWT_SECRET_KEY'], first)
+        self.assertTrue(any('up' in c for c in self.calls))
+
+    def test_jwt_existing_container_recovery(self):
+        valid = 'a' * 64
+        self.assertEqual(deploy.choose_jwt('short', valid), valid)
+        self.assertEqual(deploy.choose_jwt(valid, 'short'), valid)
+        self.assertEqual(len(deploy.choose_jwt('short', 'also-short')), 64)
+        with self.assertRaises(ValueError):
+            deploy.choose_jwt(valid, 'b' * 64)
+
+    def test_invalid_existing_encryption_key_still_stops_before_build(self):
+        (self.root / '.env').write_text('JWT_SECRET_KEY=short\nENCRYPTION_KEY=invalid\nCORS_ORIGINS=https://learn.example.com\n')
         with self.assertRaises(ValueError):
             self.execute()
         self.assertFalse(any('build' in c for c in self.calls))

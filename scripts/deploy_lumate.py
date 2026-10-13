@@ -45,6 +45,19 @@ def missing(value):
     return not value or value.startswith("replace-with-")
 
 
+def choose_jwt(configured, previous):
+    """Repair unusable JWT keys while preserving an existing usable key."""
+    configured_valid = not missing(configured) and len(configured) >= 32
+    previous_valid = not missing(previous) and len(previous) >= 32
+    if previous_valid:
+        if configured_valid and configured != previous:
+            raise ValueError("JWT_SECRET_KEY differs from the existing Lumate container. Reconcile the existing key before deploying.")
+        return previous
+    if configured_valid:
+        return configured
+    return secrets.token_hex(32)
+
+
 def write_env(path, original, updates):
     """Replace duplicate keys atomically and retain unrelated settings."""
     lines = []
@@ -123,13 +136,17 @@ def main():
     original = source.read_text()
     values = read_env(original)
     updates = {}
-    for key in ("JWT_SECRET_KEY", "ENCRYPTION_KEY", "CORS_ORIGINS"):
+    jwt = choose_jwt(values.get("JWT_SECRET_KEY"), previous.get("JWT_SECRET_KEY"))
+    if jwt != values.get("JWT_SECRET_KEY"):
+        values["JWT_SECRET_KEY"] = updates["JWT_SECRET_KEY"] = jwt
+        print("Prepared a valid JWT key (existing valid key reused or a new 64-character key generated).", flush=True)
+    if previous.get("JWT_SECRET_KEY") and jwt != previous["JWT_SECRET_KEY"]:
+        print("The old JWT key was unusable; sign in again after deployment.", flush=True)
+    for key in ("ENCRYPTION_KEY", "CORS_ORIGINS"):
         if missing(values.get(key)) and not missing(previous.get(key)):
             values[key] = updates[key] = previous[key]
         elif key != "CORS_ORIGINS" and not missing(previous.get(key)) and values.get(key) != previous[key]:
             raise ValueError(f"{key} differs from the running Lumate container. Reconcile the existing key before deploying.")
-    if missing(values.get("JWT_SECRET_KEY")):
-        values["JWT_SECRET_KEY"] = updates["JWT_SECRET_KEY"] = secrets.token_hex(32)
     if missing(values.get("ENCRYPTION_KEY")):
         values["ENCRYPTION_KEY"] = updates["ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
     if missing(values.get("CORS_ORIGINS")) or values.get("CORS_ORIGINS") == "http://localhost:3003":
