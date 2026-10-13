@@ -114,3 +114,9 @@ docker run --rm -v lumate-customized_uploads:/data -v "$PWD":/backup alpine \
 - **页面能打开但 API 失败**：检查 `CORS_ORIGINS` 是否精确包含当前浏览器地址，并确认 `api` 健康检查为 `healthy`。
 - **容器删除后 `KeyError: 'State'`**：旧脚本的通用 `docker inspect` 误读了同名镜像。更新脚本后重新运行 `sudo sh scripts/deploy.sh --env-file deploy/.env.development`；不要删除数据卷。
 - **数据卷存在但找不到 `ENCRYPTION_KEY`**：从旧部署配置或备份恢复原密钥，再运行脚本；新密钥不能解密旧数据。
+- **镜像构建完成后报 `API preflight container failed`**：脚本在启动服务前会用临时 API 容器测试 LLM 并保存配置，失败时不会替换已有 Lumate 服务。先执行下面的无密钥诊断命令，检查临时容器能否启动；若成功，再查看部署脚本给出的 `LLM test failed`（密钥、额度、模型或出站网络）或 `LLM configuration save failed`（Lumate 数据卷权限）提示。不要把 `deploy/.env.development`、完整 `docker compose config` 输出或 API Key 粘贴到工单或聊天中。
+
+  ```sh
+  cd /opt/ai-edu/lumate
+  sudo docker compose --project-name lumate-customized --env-file deploy/.env.development -f docker-compose.deploy.yml run --rm --no-deps -T api python -c 'print("API preflight container starts")'
+  ```

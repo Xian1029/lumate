@@ -288,11 +288,31 @@ async def check():
         print('LLM test failed: '+type(e).__name__+'; check key, quota, model and outbound network.',file=sys.stderr)
         sys.exit(1)
 asyncio.run(check())
-update_llm_runtime_config({'provider':p['provider'],'model':p['model'],'llm_required':True,'provider_keys':{p['provider']:p['key']}})
+try:
+    update_llm_runtime_config({'provider':p['provider'],'model':p['model'],'llm_required':True,'provider_keys':{p['provider']:p['key']}})
+except Exception as e:
+    print('LLM configuration save failed: '+type(e).__name__+'; check Lumate data-volume permissions.',file=sys.stderr)
+    sys.exit(1)
 print('Real LLM request succeeded; configuration saved to Lumate data volume.')
 """
-    run(compose + ["run", "--rm", "--no-deps", "-T", "api", "python", "-c", probe],
-        data=json.dumps({"provider": provider, "model": model, "key": key}), timeout=180)
+    try:
+        run(compose + ["run", "--rm", "--no-deps", "-T", "api", "python", "-c", probe],
+            data=json.dumps({"provider": provider, "model": model, "key": key}), timeout=180)
+    except subprocess.CalledProcessError as exc:
+        # Compose and Python may include credentials in arbitrary stderr. Only
+        # relay the probe's deliberately sanitized, fixed-format status line.
+        diagnostic = re.search(
+            r"(?m)^(LLM (?:test|configuration save) failed: [A-Za-z_][A-Za-z_0-9]*; "
+            r"(?:check key, quota, model and outbound network|check Lumate data-volume permissions)\.)$",
+            exc.stderr or "",
+        )
+        if diagnostic:
+            raise ValueError(diagnostic.group(1)) from None
+        raise ValueError(
+            "API preflight container failed after image build (Docker exit "
+            f"{exc.returncode}). Run the one-off API container diagnostic in DEPLOYMENT.md; "
+            "no Lumate services were replaced."
+        ) from None
     print("LLM check passed. Starting Lumate services...", flush=True)
     run(compose + ["up", "-d", "--no-build"], capture=False, timeout=240)
     deadline = time.monotonic() + 180

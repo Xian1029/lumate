@@ -224,8 +224,23 @@ class DeploymentTests(unittest.TestCase):
 
     def test_llm_failure_does_not_start_services(self):
         self.fail_stage = 'run'
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaisesRegex(ValueError, 'API preflight container failed after image build'):
             self.execute()
+        self.assertFalse(any('up' in c for c in self.calls))
+
+    def test_llm_probe_reports_only_sanitized_diagnostic(self):
+        original = self.run_mock
+
+        def failed_probe(args, **kwargs):
+            if 'run' in args:
+                raise subprocess.CalledProcessError(
+                    1, args, stderr='LLM test failed: ConnectError; check key, quota, model and outbound network.\nsecret-key-value')
+            return original(args, **kwargs)
+
+        with patch.object(self, 'run_mock', side_effect=failed_probe):
+            with self.assertRaisesRegex(ValueError, 'LLM test failed: ConnectError') as caught:
+                self.execute()
+        self.assertNotIn('secret-key-value', str(caught.exception))
         self.assertFalse(any('up' in c for c in self.calls))
 
     def test_foreign_volume_stops_before_build(self):
