@@ -10,7 +10,7 @@ apscheduler>=3.10.0
 crawl4ai==0.4.0
 python-magic==0.4.27
 scrapling>=0.2
-playwright>=1.49.0
+playwright>=1.63.0
 canvasapi>=3.3.0
 
 # Push notifications
